@@ -21,8 +21,8 @@ things:
   "kind": "page",
   "community": true,
   "summary": {
-    "en": "A quota card wall with expiry tiers, daily and per-provider usage charts, 24-hour cache-hit and token curves, optional remote attribution and account detail. Runs its own zero-dependency local service and reads only this machine's Magpie usage data.",
-    "zh": "额度到期卡片墙 + 每日/模型/provider 用量图表 + 24 小时缓存命中与 token 曲线，可选远端归因与账号明细。由插件自带零依赖本机服务供数，只读本机 Magpie 用量数据。"
+    "en": "A quota card wall with expiry tiers, daily/per-provider charts, 24h cache-hit and token curves, optional remote attribution and account detail. Runs its own zero-dependency local service reading this machine's Magpie usage data; optional remote attribution queries the configured remote magpie.",
+    "zh": "额度到期卡片墙 + 每日与 provider 用量图表 + 24 小时缓存命中与 token 曲线，可选远端归因与账号明细。自带零依赖本机服务，读本机 Magpie 用量数据；远端归因会查询所配置的远端 magpie。"
   }
 }
 ```
@@ -34,7 +34,7 @@ requires all three texts to match).
 ## README Pages row
 
 ```md
-| [page-usage-board](packages/page-usage-board) | Full usage board: quota cards with expiry tiers, daily and per-provider charts, 24-hour cache-hit and token curves, optional remote attribution and account detail | none (the page reads nothing through the bridge; its local service reads your usage.jsonl and magpie's usage/quota API) |
+| [page-usage-board](packages/page-usage-board) | Full usage board: quota cards with expiry tiers, daily and per-provider charts, 24-hour cache-hit and token curves, optional remote attribution and account detail | none (the page reads nothing through the bridge; its local service reads your usage.jsonl, magpie's usage/quota API, and — for optional remote attribution — your magpie config's provider key to query the configured remote magpie) |
 ```
 
 ## The `docs/` layout trap

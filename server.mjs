@@ -38,7 +38,7 @@ const PORT_SPAN = 21;
 // 生效口令落盘位置（与 usage.jsonl 同目录；测试可用 PAGE_KEY_FILE 覆盖）
 const KEY_FILE = process.env.PAGE_KEY_FILE || path.join(os.homedir(), '.config', 'magpie', 'usage-page-key');
 // 本机直连/远端的口径：usage.jsonl 里这些 provider 的流量记为「走远端」（其余为直连）
-const REMOTE_PROVIDERS = (process.env.REMOTE_PROVIDERS || 'magpie-direct,magpie-cf').split(',').map((x) => x.trim()).filter(Boolean);
+const REMOTE_PROVIDERS = (process.env.REMOTE_PROVIDERS || 'magpie-direct,magpie-cf,remote-magpie,magpie-2').split(',').map((x) => x.trim()).filter(Boolean);
 // Host 校验：默认只认识回环名。反代或非回环部署时用 ALLOWED_HOSTS=域名1,域名2 显式放行。
 const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
 const STATIC_DIR = path.join(ROOT, 'static');
@@ -559,7 +559,10 @@ async function handleRequest(req, res, url) {
   // 口令门只拦看板页本身：它内联了全量数据和口令。static/ 下的 echarts、logo 等
   // 不含数据，匿名可取——沙盒 frame 不带 cookie，旧的"子资源 URL 带 key"做法会把
   // 口令泄进代理日志，已废弃。
-  const openPage = file === '/index.html' && LOOPBACK_BIND;
+  // 匿名页面门只在「未声明任何公共名」时开放：ALLOWED_HOSTS 非空 = 存在反代/公网入口，
+  // 此时页面必须带口令（否则经代理的匿名请求会拿到注入了口令的页面——P1 复审实测绕过）。
+  // 未设 ALLOWED_HOSTS 的纯本机/默认部署不受影响。
+  const openPage = file === '/index.html' && LOOPBACK_BIND && ALLOWED_HOSTS.length === 0;
   if (file === '/index.html' && PAGE_KEY && !authed(req, url) && !openPage) { res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('需要访问口令：在 URL 后加 ?key=…'); }
 
   // 首页：服务端把数据直接内联进 HTML（window.__DATA__），页面加载即有数据，
@@ -593,7 +596,7 @@ async function handleRequest(req, res, url) {
       'Cache-Control': 'no-store',
       // 页面脚本全是同源文件 + 少量内联（数据注入 / bridge hello）；数据获取都是同源
       // /api/*，connect-src 只放行本源和 CF 统计信标（sendBeacon 也受 connect-src 管辖）
-      'Content-Security-Policy': "default-src 'self' data:; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://static.cloudflareinsights.com",
+      'Content-Security-Policy': "default-src 'self' data:; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://static.cloudflareinsights.com; object-src 'none'; base-uri 'none'",
     });
     return res.end(html);
   }
@@ -645,7 +648,7 @@ async function probe(hp) {
   return -1;
 }
 const persistKey = () => {
-  try { mkdirSync(path.dirname(KEY_FILE), { recursive: true }); writeFileSync(KEY_FILE, PAGE_KEY); } catch {}
+  try { mkdirSync(path.dirname(KEY_FILE), { recursive: true }); writeFileSync(KEY_FILE, PAGE_KEY, { mode: 0o600 }); try { chmodSync(KEY_FILE, 0o600); } catch {} } catch {}
 };
 
 // ---- 品牌 logo 自动生成 ----
@@ -741,7 +744,7 @@ function ensureLogos() {
     if (process.env.LOGOS_FORCE === '1' || !existsSync(path.join(LOGOS_DIR, 'manifest.json'))) scanLogos();
   } catch (e) { console.log('[magpie-usage] logos scan failed:', e.message || e); }
 }
-function main() {
+function main(resolve, reject) {
   // 实际生效口令在此定稿（listen 前）：显式设了 PAGE_KEY 用设的（空串=开放）；
   // 未设 → 落盘口令，没有则生成随机 32 位 hex 并落盘（复用已有实例的下次启动靠落盘文件拼完整地址）
   ensureLogos();
@@ -757,7 +760,17 @@ function main() {
     else { PAGE_KEY = randomBytes(16).toString('hex'); keySource = 'new'; }
     persistKey();
   }
-  const startPort = process.env.PORT !== undefined ? +process.env.PORT : null;
+  let startPort = null;
+  if (process.env.PORT !== undefined) {
+    const n = Number(process.env.PORT);
+    if (!Number.isInteger(n) || n < 0 || n > 65535) {
+      const err = new Error(`invalid PORT=${process.env.PORT} — must be an integer 0-65535`);
+      console.error(`[magpie-usage] ${err.message}`);
+      reject(err);
+      return;
+    }
+    startPort = n;
+  }
   // 端口状态机：base 空闲→用它；base 被同款占用→复用（既定语义，不报错）；被异种占用→向上找空闲口；
   // 自动模式扫满仍无空口 → listen(0) 由系统挑。显式 PORT 只试一次，被占保留原 error 日志行为。
   // listening 回调只挂一次：listen(port, cb) 的 cb 是 once('listening')，失败尝试残留的 cb
@@ -766,13 +779,14 @@ function main() {
   const tryBind = (p) => {
     server.listen(p, HOST);
     server.once('error', function onErr(e) {
-      if (e.code !== 'EADDRINUSE' && e.code !== 'EACCES') { console.log(`[magpie-usage] not started: ${e.code || e.message}`); return; }
+      if (e.code !== 'EADDRINUSE' && e.code !== 'EACCES') { console.log(`[magpie-usage] not started: ${e.code || e.message}`); reject(new Error(`not started: ${e.code || e.message}`)); return; }
       if (p === PORT_BASE && startPort === null) {
         probe(`${URL_HOST}:${PORT_BASE}`).then((kind) => {
           if (kind >= 0) { // 同款（v2/v1 旧版）→ 静默复用，这是与 systemd/手动 node 并存的既定语义
             console.log(`[magpie-usage] port ${PORT_BASE} in use by another usage server${kind === 0 ? ' (v1, no key)' : ''} — reusing it`);
             console.log(`[magpie-usage] open ${openUrl(PORT_BASE, kind === 1)}`);
             if (envKey === undefined) persistKey(); // 这轮定稿的 key 落盘，给复用实例的下次启动用
+            resolve(PORT_BASE);
           } else tryBind(p + 1); // 异种占用 → 向上找空闲口
         });
       } else if (startPort === null && p < PORT_BASE + PORT_SPAN) {
@@ -781,6 +795,7 @@ function main() {
         server.listen(0, HOST); // 扫满仍无空口 → 系统挑
       } else {
         console.log(`[magpie-usage] not started: ${e.code || e.message} (PORT=${p} 被占用)`);
+        reject(new Error(`not started: ${e.code || e.message} (PORT=${p} in use)`));
       }
     });
   };
@@ -791,8 +806,9 @@ function main() {
     const base = `http://${URL_HOST}:${port}/`;
     if (!PAGE_KEY) return `${base}（无口令开放）`;
     if (LOOPBACK_BIND || !withKey) return base;
-    if (keySource === 'env' || keySource === 'new') return `${base}?key=${PAGE_KEY}`;
-    return `${base}（口令见 ${KEY_FILE}）`;
+    // 环境变量设置的 key 不进日志（操作者本就知道它）；只有本轮新生成的 key 打一次完整地址
+    if (keySource === 'new') return `${base}?key=${PAGE_KEY}`;
+    return `${base}（口令见 PAGE_KEY 环境变量 / ${KEY_FILE}）`;
   }
   // 绑定成功：日志打印实际生效的访问地址（是否含 key 见 openUrl）；带路页只写固定端口，
   // 口令由服务端注入返回的 HTML，所以这里不再改写任何页面文件。
@@ -800,17 +816,27 @@ function main() {
     console.log(`[magpie-usage] listening on http://${URL_HOST}:${port}/  gateway=${GATEWAY}  jsonl=${USAGE_JSONL}(${existsSync(USAGE_JSONL) ? 'ok' : 'missing'})`);
     console.log(`[magpie-usage] open ${openUrl(port)}`);
     server.on('error', (e) => console.log(`[magpie-usage] server error: ${e.message}`)); // 绑定后的常驻兜底
+    resolve(port);
   }
   if (startPort !== null) tryBind(startPort);
   else tryBind(PORT_BASE);
 }
-let booted = false;
+let bootPromise = null;
+// 返回 Promise：resolve 于首次成功监听（或确认复用同款实例），reject 于终态启动失败。
+// index.mjs 的 server() 会 await 它——magpie 在 server() 返回后立刻探测服务端口，
+// 「发射后不管」会让那次探测吃 connection refused（社区生命周期契约）。
 function startServer() {
-  if (booted) return;
-  booted = true;
-  main();
+  if (bootPromise) return bootPromise;
+  bootPromise = new Promise((resolve, reject) => {
+    try {
+      main(resolve, reject);
+    } catch (e) { reject(e); }
+  });
+  return bootPromise;
 }
 
 export { startServer, aggregateAttribution, remoteSource };
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) startServer();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  startServer().catch((e) => { console.error(`[magpie-usage] not started: ${e.message}`); process.exit(1); });
+}

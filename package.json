@@ -44,7 +44,7 @@
   "magpie": {
     "name": "Usage Board",
     "summary": {
-      "en": "A quota card wall with expiry tiers, daily and per-provider usage charts, 24-hour cache-hit and token curves, optional remote attribution and account detail. Runs its own zero-dependency local service and reads only this machine's Magpie usage data.",
+      "en": "A quota card wall with expiry tiers, daily/per-provider charts, 24h cache-hit and token curves, optional remote attribution and account detail. Runs its own zero-dependency local service reading this machine's Magpie usage data; optional remote attribution queries the configured remote magpie.",
       "zh": "额度到期卡片墙 + 每日/模型/provider 用量图表 + 24 小时缓存命中与 token 曲线，可选远端归因与账号明细。由插件自带零依赖本机服务供数，只读本机 Magpie 用量数据。"
     },
     "page": {

@@ -30,15 +30,16 @@ Two layers, the same shape the community uses for host-part pages:
    `magpie.service` first: when `magpie web` runs on another machine it proxies the local
    service under magpie's own origin, so **magpie's own key/auth is the outer gate** and the
    page never leaves that origin. A desktop window has no service, so it falls back to
-   `http://127.0.0.1:3455/`. A 3-second `<meta refresh>` is the fallback if the boot script
+   `http://127.0.0.1:3455/`. An 8-second `<meta refresh>` is the fallback if the boot script
    is blocked. The service injects its own token into the board HTML (`window.__KEY__`) and
    checks it on `/api/*`; in plugin/loopback mode the token is generated, never typed, and
    never appears in a URL, the repository or the package. A standalone start on a non-loopback
    bind is the one exception: the first start prints a one-time URL with the key in it.
 
-The 3-second `<meta refresh>` is deliberate: an earlier all-script page could be declared dead
+The 8-second `<meta refresh>` is deliberate: an earlier all-script page could be declared dead
 by the host after 10 seconds when the bridge handshake raced; the meta fallback still
-navigates if `boot.js` never runs. The board page also sends the bridge `hello` once it is up.
+navigates if `boot.js` never runs, and the window is wide enough for slow bridge handshakes
+that `boot.js` resolves first. The board page also sends the bridge `hello` once it is up.
 
 ### Why a local service (and its token)
 
