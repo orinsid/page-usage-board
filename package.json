@@ -11,7 +11,9 @@
     "static",
     "LICENSE",
     "README.md",
-    "scripts"
+    "scripts",
+    "NOTICE",
+    "docs"
   ],
   "scripts": {
     "start": "node server.mjs",
@@ -46,16 +48,13 @@
     "name": "Usage Board",
     "summary": {
       "en": "A quota card wall with expiry tiers, daily/per-provider charts, 24h cache-hit and token curves, optional remote attribution and account detail. Runs its own zero-dependency local service reading this machine's Magpie usage data; optional remote attribution queries the configured remote magpie.",
-      "zh": "额度到期卡片墙 + 每日/模型/provider 用量图表 + 24 小时缓存命中与 token 曲线，可选远端归因与账号明细。由插件自带零依赖本机服务供数，只读本机 Magpie 用量数据。"
+      "zh": "额度到期卡片墙 + 每日与 provider 用量图表 + 24 小时缓存命中与 token 曲线，可选远端归因与账号明细。自带零依赖本机服务，读本机 Magpie 用量数据；远端归因会查询所配置的远端 magpie。"
     },
     "page": {
       "title": "Usage Board",
       "titles": {
         "en": "Usage Board",
-        "zh": "用量看板",
-        "zh-TW": "用量看板",
-        "ja": "使用量ボード",
-        "de": "Nutzungstafel"
+        "zh": "用量看板"
       },
       "file": "page/index.html",
       "icon": "page/icon.svg",

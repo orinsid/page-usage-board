@@ -12,7 +12,7 @@
   的 origin 里，远程打开时由 magpie 自己的 key/auth 保护；桌面窗口没有 service，
   回退到本机 http://127.0.0.1:3455/。
 
-  <meta refresh> 是兜底：脚本被 CSP 拦掉、或 bridge 握手卡住时，3 秒后仍能走本机。
+  <meta refresh> 是兜底：脚本被 CSP 拦掉、或 bridge 握手卡住时，8 秒后仍能走本机。
   boot.js 只做一次跳转，不探测服务（页面 CSP 是 connect-src 'none'，探测必失败）。
 
   口令不在这里：服务端返回看板时把口令注入 window.__KEY__，只有 API 路由校验它。

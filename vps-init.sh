@@ -14,15 +14,17 @@
 #   MAGPIE_CONF_DIR magpie 配置目录，默认 /opt/stacks/magpie/config/magpie
 #   GATEWAY         上游网关，默认 http://127.0.0.1:3425
 #   BUN             bun 可执行文件，默认 /root/.bun/bin/bun
-set -e
+set -euo pipefail
 INSTALL_DIR="${INSTALL_DIR:-/opt/magpie-usage}"
 TARBALL="${TARBALL:-/tmp/dashboard.tgz}"
 PORT="${PORT:-3455}"
 MAGPIE_CONF_DIR="${MAGPIE_CONF_DIR:-/opt/stacks/magpie/config/magpie}"
 GATEWAY="${GATEWAY:-http://127.0.0.1:3425}"
 BUN="${BUN:-/root/.bun/bin/bun}"
+# 安全默认：只听回环；公网部署需显式 HOST=0.0.0.0 + ALLOWED_HOSTS + 前置 TLS 反代
+HOST="${HOST:-127.0.0.1}"
 : "${PAGE_KEY:?PAGE_KEY must be set (the dashboard page key)}"
-[ -n "${ALLOWED_HOSTS:-}" ] || echo "warning: ALLOWED_HOSTS is empty — a reverse proxy's Host name will get 403" >&2
+[ -n "${ALLOWED_HOSTS:-}" ] || [ "$HOST" = "127.0.0.1" ] || echo "warning: ALLOWED_HOSTS is empty — a reverse proxy's Host name will get 403" >&2
 
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
@@ -36,13 +38,13 @@ tar xzf "$TARBALL"
 chmod 644 static/*
 chmod 755 "$INSTALL_DIR"
 
-# 读 cloud caller key 作为上游 key
+# 读 cloud caller key 作为上游 key（找不到就报错退出——静默错配比失败更糟）
 UPKEY=$(CALLER_KEYS="$MAGPIE_CONF_DIR/caller-keys.json" python3 - <<'PY'
 import json, os
 d = json.load(open(os.environ['CALLER_KEYS']))
 print([k['secret'] for k in d if k['name'] == 'cloud'][0])
 PY
-) || UPKEY=$(grep -o '"secret": *"[^"]*"' "$MAGPIE_CONF_DIR/caller-keys.json" | head -1)
+)
 
 # systemd 服务：口令类变量进独立 env 文件（600 权限），unit 本体保持可读
 umask 077
@@ -60,11 +62,14 @@ After=network.target docker.service
 ExecStart=$BUN $INSTALL_DIR/server.mjs
 EnvironmentFile=$INSTALL_DIR/magpie-usage.env
 Environment=PORT=$PORT
-Environment=HOST=0.0.0.0
+Environment=HOST=${HOST}
 Environment=GATEWAY=$GATEWAY
 Environment=USAGE_JSONL=$MAGPIE_CONF_DIR/usage.jsonl
 Environment=ALLOWED_HOSTS=${ALLOWED_HOSTS:-}
 Environment=DATA_DIR=$INSTALL_DIR/data
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
 Restart=always
 RestartSec=5
 

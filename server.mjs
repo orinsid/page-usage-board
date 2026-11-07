@@ -353,7 +353,10 @@ async function fetchRemoteRows(src, period, first) {
   const rows = [...((first && first.rows) || [])];
   const total = Number(first.total) || rows.length;
   let offset = rows.length;
+  const t0 = Date.now();
   while (offset < total && rows.length < REMOTE_MAX) {
+    // 远端分页总时限：provider key 是真实凭据，拉取不能无上限（前端 45s 会先行放弃）
+    if (Date.now() - t0 > 40000) break;
     const offsets = [];
     for (let i = 0; i < REMOTE_CONC; i++) {
       const o = offset + i * REMOTE_PAGE;
@@ -620,6 +623,8 @@ async function handleRequest(req, res, url) {
   }
 
   const heads = { 'Content-Type': MIME[path.extname(full).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' };
+  // echarts.min.js 的 URL 带 ?v= 构建戳，内容变更即换 URL → 可长缓存（1MB→每次导航重拉是最大可用性痛点）
+  if (file === '/static/echarts.min.js') heads['Cache-Control'] = 'public, max-age=31536000, immutable';
   if (file.endsWith('.svg')) heads['Content-Security-Policy'] = 'sandbox'; // SVG 可内嵌脚本：被直接打开时整页隔离
   res.writeHead(200, heads);
   res.end(await readFile(full));
@@ -705,14 +710,14 @@ function scanLogos() {
         if (declared.startsWith('data:')) {
           const m = declared.match(/^data:([^;,]+)(;base64)?,/);
           const ext = m && (ICON_MIME[m[1]] || (m[1].includes('svg') ? 'svg' : null));
-          if (ext) { writeLogo(sub, ext, m[2] ? Buffer.from(declared.split('base64,')[1], 'base64') : Buffer.from(decodeURIComponent(declared.split(',', 1)[1] || ''))); out[sub] = '/logos/' + sub + '.' + ext; continue; }
+          if (ext) { writeLogo(sub, ext, m[2] ? Buffer.from(declared.split('base64,')[1], 'base64') : Buffer.from(decodeURIComponent(declared.split(',', 1)[1] || ''))); out[sub] = 'logos/' + sub + '.' + ext; continue; }
         } else if (/^https?:\/\//.test(declared)) { fetchOne(sub, declared, out); continue; }
       }
       // ② assets/ 下的图片
       const assets = path.join(dir, 'assets');
       if (existsSync(assets)) {
         const img = walkFiles(assets, null, 2).find(f => /\.(png|svg|webp|ico|jpg)$/i.test(f));
-        if (img) { const ext = img.match(/\.(png|svg|webp|ico|jpg)$/i)[1].toLowerCase(); writeLogo(sub, ext, readFileSync(img)); out[sub] = '/logos/' + sub + '.' + ext; continue; }
+        if (img) { const ext = img.match(/\.(png|svg|webp|ico|jpg)$/i)[1].toLowerCase(); writeLogo(sub, ext, readFileSync(img)); out[sub] = 'logos/' + sub + '.' + ext; continue; }
       }
       // ③ 源码内联 data URI（跳过 node_modules 嵌套与 .test.）
       for (const f of walkFiles(dir, null, 2)) {
@@ -720,7 +725,7 @@ function scanLogos() {
         let text = ''; try { text = readFileSync(f, 'utf8'); } catch { continue; }
         dataUri.lastIndex = 0;
         const m = dataUri.exec(text);
-        if (m) { const ext = ICON_MIME[m[1]] || (m[1].includes('svg') ? 'svg' : null); if (ext) { writeLogo(sub, ext, Buffer.from(m[2], 'base64')); out[sub] = '/logos/' + sub + '.' + ext; } break; }
+        if (m) { const ext = ICON_MIME[m[1]] || (m[1].includes('svg') ? 'svg' : null); if (ext) { writeLogo(sub, ext, Buffer.from(m[2], 'base64')); out[sub] = 'logos/' + sub + '.' + ext; } break; }
       }
     }
   }
@@ -731,18 +736,9 @@ function scanLogos() {
       if (dot <= 0) continue;
       const sub = f.slice(0, dot), ext = f.slice(dot + 1);
       if (out[sub]) continue;
-      if (['png', 'svg', 'ico', 'jpg', 'webp'].includes(ext)) out[sub] = '/logos/' + f;
+      if (['png', 'svg', 'ico', 'jpg', 'webp'].includes(ext)) out[sub] = 'logos/' + f;
     }
   } catch {}
-  if (existsSync(bundled)) {
-    for (const f of readdirSync(bundled)) {
-      const m = f.match(/^([a-z0-9-]+)\.(png|svg|webp|ico|jpg)$/i);
-      if (!m || f.startsWith('manifest')) continue;
-      const sub = m[1].toLowerCase();
-      if (out[sub]) continue;
-      try { writeLogo(sub, m[2].toLowerCase(), readFileSync(path.join(bundled, f))); out[sub] = '/logos/' + sub + '.' + m[2].toLowerCase(); } catch {}
-    }
-  }
   try { mkdirSync(LOGOS_DIR, { recursive: true }); writeFileSync(path.join(LOGOS_DIR, 'manifest.json'), JSON.stringify(out)); } catch {}
   console.log(`[magpie-usage] logos: ${Object.keys(out).length} brands → ${LOGOS_DIR}`);
 }
@@ -766,7 +762,7 @@ function fetchOne(sub, url, out) {
   if (!/^https:\/\//.test(url)) return; // 品牌图标只从 https 下载
   fetch(url, { signal: AbortSignal.timeout(10000) })
     .then(r => (r.ok ? r.arrayBuffer() : null))
-    .then(ab => { if (ab && ab.byteLength > 200 && ab.byteLength <= 2 * 1024 * 1024) { const ext = (/\.ico($|\?)/.test(url) ? 'ico' : /\.svg/.test(url) ? 'svg' : 'png'); writeLogo(sub, ext, Buffer.from(ab)); out[sub] = '/logos/' + sub + '.' + ext; try { writeFileSync(path.join(LOGOS_DIR, 'manifest.json'), JSON.stringify(out)); } catch {} } })
+    .then(ab => { if (ab && ab.byteLength > 200 && ab.byteLength <= 2 * 1024 * 1024) { const ext = (/\.ico($|\?)/.test(url) ? 'ico' : /\.svg/.test(url) ? 'svg' : 'png'); writeLogo(sub, ext, Buffer.from(ab)); out[sub] = 'logos/' + sub + '.' + ext; try { writeFileSync(path.join(LOGOS_DIR, 'manifest.json'), JSON.stringify(out)); } catch {} } })
     .catch(() => {});
 }
 function ensureLogos() {
@@ -814,10 +810,10 @@ function main(resolve, reject) {
     server.once('error', function onErr(e) {
       if (e.code !== 'EADDRINUSE' && e.code !== 'EACCES') { console.log(`[magpie-usage] not started: ${e.code || e.message}`); reject(new Error(`not started: ${e.code || e.message}`)); return; }
       // 宿主重启竞态：插件模式下 base 口被占，多半是上一代同款实例濒死（能应答 ping 却
-      // 马上退出——复用它会让端口随后死掉，502）。先轮询等它退出再绑定，最多 ~19s；
+      // 马上退出——复用它会让端口随后死掉，502）。先轮询等它退出再绑定，最多 ~8s；
       // 真有别的同款实例常驻时，超时后落入既有探测/复用逻辑。带路页与 manifest 都指向
       // base 口，不能向上扫描。
-      if (PLUGIN_MODE && p === PORT_BASE && startPort === null && baseWait < 19200) {
+      if (PLUGIN_MODE && p === PORT_BASE && startPort === null && baseWait < 8000) {
         baseWait += 800;
         console.log(`[magpie-usage] port ${PORT_BASE} busy — waiting for the previous instance to exit (${baseWait / 800}/24)`);
         setTimeout(() => tryBind(p), 800);
@@ -882,6 +878,7 @@ function startServer() {
       main(resolve, reject);
     } catch (e) { reject(e); }
   });
+  bootPromise.catch(() => { bootPromise = null; }); // 失败不缓存：下一次 server() 调用重试
   return bootPromise;
 }
 

@@ -250,7 +250,17 @@ test('index.mjs: importing has no side effects, server() starts and awaits liste
     }).catch((e) => { console.error('FAIL', e && e.message); process.exit(1); });
   `;
   const r = spawnSync(process.execPath, ['-e', code], {
-    env: { ...process.env, PORT: '3499', PAGE_KEY: TEST_KEY, PAGE_KEY_FILE: path.join(os.tmpdir(), 'usage-board-lifecycle-key') },
+    env: {
+      ...process.env,
+      PORT: '3499',
+      PAGE_KEY: TEST_KEY,
+      PAGE_KEY_FILE: path.join(os.tmpdir(), 'usage-board-lifecycle-key'),
+      USAGE_JSONL: path.join(os.tmpdir(), 'usage-board-lc.jsonl'),
+      DATA_DIR: path.join(os.tmpdir(), 'usage-board-lc-data'),
+      LOGOS: '0',
+      ATTRIBUTION: 'local',
+      MAGPIE_PROVIDERS: path.join(os.tmpdir(), 'usage-board-lc-np.json'),
+    },
     encoding: 'utf8',
     timeout: 15000,
   });
@@ -277,7 +287,17 @@ test('plugin mode waits for a dying previous instance on the base port', async (
     }).catch((e) => { console.error('FAIL', e && e.message); process.exit(1); });
   `;
   const child = spawn(process.execPath, [path.join(root, 'index.mjs')], {
-    env: { ...process.env, MAGPIE_ADDR: '0.0.0.0:3425', PAGE_KEY: TEST_KEY, PAGE_KEY_FILE: path.join(os.tmpdir(), 'usage-board-zombie-key') },
+    env: {
+      ...process.env,
+      MAGPIE_ADDR: '0.0.0.0:3425',
+      PAGE_KEY: TEST_KEY,
+      PAGE_KEY_FILE: path.join(os.tmpdir(), 'usage-board-zombie-key'),
+      USAGE_JSONL: path.join(os.tmpdir(), 'usage-board-zombie.jsonl'),
+      DATA_DIR: path.join(os.tmpdir(), 'usage-board-zombie-data'),
+      LOGOS: '0',
+      ATTRIBUTION: 'local',
+      MAGPIE_PROVIDERS: path.join(os.tmpdir(), 'usage-board-zombie-np.json'),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
@@ -299,6 +319,18 @@ test('the dashboard asks the local service for attribution', () => {
   assert.match(html, /api\/attribution\?period=/);
   assert.doesNotMatch(html, /remote\.js/);
   assert.doesNotMatch(html, /MY_REMOTE/);
+});
+
+test('registry draft summary matches package.json verbatim (three-text rule)', () => {
+  const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const doc = readFileSync(path.join(root, 'docs', 'community-submission.md'), 'utf8');
+  const block = doc.match(/```json\n([\s\S]*?)```/);
+  assert.ok(block, 'registry json block present in community-submission.md');
+  const reg = JSON.parse(block[1]);
+  assert.equal(reg.package, pkg.name);
+  assert.equal(reg.name, 'Usage Board');
+  assert.equal(reg.summary.en, pkg.magpie.summary.en);
+  assert.equal(reg.summary.zh, pkg.magpie.summary.zh);
 });
 
 test('the lead page has no inline scripts and no key', () => {

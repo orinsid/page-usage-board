@@ -26,7 +26,7 @@ stamp() { # stamp <输出路径> —— 写入带版本戳的 index.html；注�
   sed "s#<head>#<head><script>window.__BUILD__=\"$STAMP\";</script>#" "$SRC/index.html" > "$1"
 }
 
-page_with_port() { # 带路页只写固定端口；口令由服务端 302 补，不落进文件
+page_with_port() { # 带路页只写固定端口；口令由服务端注入返回的看板 HTML，不落进文件
   sed -E "s#127\.0\.0\.1:[0-9]+/#127.0.0.1:${PORT}/#g" "$DIR/page/index.html" > "$1"
 }
 

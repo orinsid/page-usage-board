@@ -70,6 +70,18 @@ for (const full of pkgFiles) {
   try { text = readFileSync(full, 'utf8'); } catch { continue; }
   const rel = path.relative(root, full);
   if (secret.test(text)) problems.push(`${rel} contains what looks like a page key`);
+  // remote.js 任何形态都不允许（打包产物里按任意路径出现也算）
+  if (path.basename(full).toLowerCase() === 'remote.js') problems.push(`${rel} must not be in the package`);
+}
+// 非 hex 长随机口令（vps-init 允许任意长随机串）：PAGE_KEY=xxx 16 位以上非空白也要拦
+const passphr = /PAGE_KEY\s*[:=]\s*['"]?[A-Za-z0-9_/+-]{16,}/;
+for (const f of ['vps-init.sh', '.env.example', 'docs/docker.md', 'docs/self-hosting.md']) {
+  const full = path.join(root, f);
+  if (!existsSync(full)) continue;
+  const text = readFileSync(full, 'utf8');
+  const hit = [...text.matchAll(/PAGE_KEY\s*[:=]\s*['"]?([^\s'"]{16,})/g)].filter((m) => !/^\$\{/.test(m[1]) && m[1] !== 'must-be-set');
+  if (hit.length) problems.push(`${f} contains a literal PAGE_KEY value (${hit.length} occurrence(s))`);
+  if (passphr.test(text)) problems.push(`${f} contains what looks like a page passphrase`);
 }
 
 if (problems.length) {

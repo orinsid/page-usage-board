@@ -99,17 +99,22 @@ host. Two supported modes — proxy auth (no app key) or an app key — are in
 | `USAGE_JSONL` | `~/.config/magpie/usage.jsonl` | magpie's usage log. |
 | `DATA_DIR` | `~/.config/magpie/usage-board` | Generated brand icons and state. |
 | `EXTRA_DIRS` | empty | Extra plugin roots to scan for brand icons. |
-| `REMOTE_PROVIDERS` | `magpie-direct,magpie-cf` | Provider aliases counted as "remote" in the 24-hour split. |
+| `REMOTE_PROVIDERS` | `magpie-direct,magpie-cf,remote-magpie,magpie-2` | Provider aliases counted as "remote" in the 24-hour split. |
+| `MAGPIE_ADDR` | set by magpie | Present when the service runs under the magpie host (enables the base-port wait on restart). |
 | `ATTRIBUTION` | `auto` | `auto` uses the remote magpie from `providers.json`; `local` keeps attribution on this machine's log. |
 | `MAGPIE_PROVIDERS` | `~/.config/magpie/providers.json` | Where the remote URL and key are read from. |
 | `REMOTE_BASE` / `REMOTE_KEY` | empty | Explicit remote override (both required) instead of `providers.json`. |
 | `REMOTE_CALLERS` | `cloud,Magpie` | Caller names kept for the remote charts; other callers still appear in the caller breakdown. |
 | `LOGOS` | unset | `LOGOS=0` skips the brand-icon scan (tests, headless boxes). |
+| `EXTRA_DIRS` | empty | Extra plugin roots to scan for brand icons (comma-separated). |
 
 ## Data and privacy
 
 - Reads this machine's `usage.jsonl` and magpie's local gateway API. The board itself sends
   no telemetry (on proxied public deployments Cloudflare may inject its own analytics beacon).
+- At startup the service scans the plugin directories of THIS machine to collect provider
+  brand icons (and downloads an icon over https only when a plugin declares an https icon
+  URL); results are cached in the data directory and shown on the quota wall.
 - **Optional** remote attribution makes read-only requests to the configured remote magpie's
   own `/v1/magpie/usage/requests`, using the provider key already in
   `~/.config/magpie/providers.json`. Rows are filtered to `REMOTE_CALLERS` and aggregated
@@ -123,7 +128,7 @@ host. Two supported modes — proxy auth (no app key) or an app key — are in
 ## Develop
 
 These commands run from a git checkout — the npm package (`npm pack`) ships the
-runtime only (no `deploy.sh`, `tools/`, `test/` or this docs directory).
+runtime, docs and notices; `deploy.sh` and `test/` live in the checkout.
 
 ```sh
 node --test          # auth/host/traversal, caller filtering, package metadata
@@ -131,10 +136,9 @@ bash deploy.sh local # refresh the runtime plugin copy (RUNTIME_DIR, default ~/.
 bash deploy.sh vps   # optional standalone board: VPS_HOST + VPS_DIR, scp + md5 check
 ```
 
-- `static/index.html` is the page source; `deploy.sh` injects `window.__BUILD__` and the
-  brand-icon manifest.
-- `tools/sync-plugin-logos.mjs` rebuilds `static/logos` from installed plugins
-  (`WORKSPACE`, `OUT`, `MAGPIE_PLUGINS_NM` override the defaults).
+- `static/index.html` is the page source; `deploy.sh` injects `window.__BUILD__`.
+- Provider brand logos are collected at service startup from the installed
+  magpie plugins of the same machine (no build-time logo set is shipped).
 - `npm test` / `npm pack` run the same checks; `prepack` refuses to package a stray
   `remote.js` or a page key.
 - Remote attribution and the optional standalone board: see
@@ -142,5 +146,6 @@ bash deploy.sh vps   # optional standalone board: VPS_HOST + VPS_DIR, scp + md5 
 
 ## License
 
-MIT. `static/echarts.min.js` is Apache-2.0 (see the header in that file). Brand icons under
-`static/logos` are the trademarks of their owners and are used only to identify providers.
+MIT. `static/echarts.min.js` is a custom Apache-2.0 build of Apache ECharts (see `NOTICE`).
+Provider logos are collected at runtime from the installed magpie plugins and are the
+trademarks of their owners, used only to identify providers (see `NOTICE`).

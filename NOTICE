@@ -10,7 +10,10 @@ This product includes third-party software and assets:
   A copy of the license header is included in the file itself. The full
   license text is available at https://www.apache.org/licenses/LICENSE-2.0
 
-* Brand logos (static/logos/*)
-  Product and company names and logos are trademarks or registered
-  trademarks of their respective owners. They are used solely to
-  identify the corresponding providers and do not imply endorsement.
+* Brand logos
+  Provider logos are not bundled with this package: at service startup the
+  server collects them from the magpie plugins installed on the same machine
+  (and may download an icon over https when a plugin declares one). Product
+  and company names and logos are trademarks or registered trademarks of
+  their respective owners, used solely to identify the corresponding
+  providers; they do not imply endorsement.

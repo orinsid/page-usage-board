@@ -731,7 +731,7 @@ function provColor(name){
 let hourlyLocal=[], hourlyRemote=[];
 
 function renderHourly(){
-  fetch(auth('api/hourly'),{headers:hf()}).then(r=>r.json()).then(d=>{ hourlyLocal=(d&&d.hours)||[]; drawHourly(); })
+  fetch(auth('api/hourly'),{headers:hf()}).then(r=>{if(!r.ok)throw new Error('hourly '+r.status);return r.json()}).then(d=>{ hourlyLocal=(d&&d.hours)||[]; drawHourly(); })
     .catch(()=>{ hourlyLocal=[]; drawHourly(); });
 }
 
