@@ -573,7 +573,8 @@ async function handleRequest(req, res, url) {
   let base = STATIC_DIR;
   if (file.startsWith('/logos/')) { base = LOGOS_DIR; file = file.slice('/logos'.length); }
   const full = path.resolve(base, '.' + file);
-  const rel = path.relative(STATIC_DIR, full);
+  // 穿越守卫按各自 base 计算（logos 在 DATA_DIR 下，对 STATIC_DIR 求相对路径恒为 .. → 全部 404）
+  const rel = path.relative(base, full);
   let isFile = false;
   try { isFile = !rel.startsWith('..') && !path.isAbsolute(rel) && statSync(full).isFile(); } catch {}
   if (!isFile) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('not found'); }
