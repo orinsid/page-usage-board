@@ -45,6 +45,13 @@ sync_local() {
     cp "$DIR/page/icon.svg" "$t/page/icon.svg" 2>/dev/null
     cp "$DIR/server.mjs" "$t/server.mjs"
     cp "$DIR/index.mjs" "$t/index.mjs"
+    # 插件清单：以仓库为准同步（icon/标题/service 声明），保留运行时既有包名
+    # （magpie 按目录注册插件，改 name 有被当成另一个插件的风险）
+    if [ -f "$t/package.json" ]; then
+      node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(r.name)p.name=r.name;fs.writeFileSync(process.argv[2]+'.new',JSON.stringify(p,null,2)+'\n')" "$DIR/package.json" "$t/package.json" && mv "$t/package.json.new" "$t/package.json"
+    else
+      cp "$DIR/package.json" "$t/package.json"
+    fi
     echo "local ok: $t  ($STAMP, port $PORT)"
   else
     echo "local FAIL: $t"; return 1

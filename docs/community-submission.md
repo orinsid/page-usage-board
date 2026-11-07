@@ -55,6 +55,8 @@ Check before opening the PR:
   for pages that navigate to a local service).
 - The hosted page uses `window.magpie.service` when present, so a remote `magpie web`
   deployment keeps the frame under magpie's own origin and key.
-- The page is script-free and reaches no network; the board itself only calls
-  `127.0.0.1`.
+- The lead page is script-free; the board itself only calls its own service on
+  `127.0.0.1` (plus two deliberate exceptions: Cloudflare's injected analytics
+  beacon on proxied deployments, and brand-icon favicon downloads for the
+  quota wall — cosmetic only).
 - `magpie.permissions` is `[]`: the page reads nothing through the bridge.

@@ -8,7 +8,7 @@
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +72,22 @@ async function upstream(p) {
   catch { return { code: r.status, json: { error: body.slice(0, 200) } }; }
 }
 
-// usage.jsonl 聚合：按天×provider、7×24 热力、最近请求（60s 缓存）
+// usage.jsonl 聚合：按天×provider、7×24 热力、最近请求（60s 缓存）。
+// 流式逐行读取：日志曾到 23MB，整读+全量解析把 RSS 放大 ~9 倍——现在峰值只保留聚合结果
+async function* linesOf(path) {
+  const stream = createReadStream(path, { encoding: 'utf8' });
+  let buf = '';
+  for await (const chunk of stream) {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i);
+      buf = buf.slice(i + 1);
+      if (line) yield line;
+    }
+  }
+  if (buf) yield buf;
+}
 let detailCache = null;
 async function readDetail(days) {
   const cacheKey = days + ':' + Math.floor(Date.now() / 60000);
@@ -81,10 +96,8 @@ async function readDetail(days) {
   const daily = new Map();
   const heat = new Array(7 * 24).fill(0);
   let recent = [];
-  let text;
-  try { text = await readFile(USAGE_JSONL, 'utf8'); }
-  catch { return { daily: [], heat, recent: [] }; }
-  for (const line of text.split('\n')) {
+  try {
+    for await (const line of linesOf(USAGE_JSONL)) {
     if (!line) continue;
     let r; try { r = JSON.parse(line); } catch { continue; }
     // magpie 自家探活行（kind:"model_list", source:"probe"）不是真实调用，过滤（2026-11-04，实测占 9.5%）
@@ -100,12 +113,17 @@ async function readDetail(days) {
     a.inp += r.in || 0; a.out += r.out || 0; a.cache += r.cache_read || 0; a.reasoning += r.reasoning || 0;
     if (r.ttft_ms > 0) { a.ttft += r.ttft_ms; a.timed++; }
     if (ts >= Date.now() - 7 * 86400e3) heat[new Date(ts).getDay() * 24 + new Date(ts).getHours()]++;
-    if (r.status != null) recent.push({
-      t: r.t, agent: r.agent, provider: prov, model: r.served || r.model,
-      in: r.in || 0, out: r.out || 0, ttft: r.ttft_ms || null, ms: r.ms || null,
-      status: r.status, tries: r.tries || 1,
-    });
+    if (r.status != null) {
+      recent.push({
+        t: r.t, agent: r.agent, provider: prov, model: r.served || r.model,
+        in: r.in || 0, out: r.out || 0, ttft: r.ttft_ms || null, ms: r.ms || null,
+        status: r.status, tries: r.tries || 1,
+      });
+      // recent 有界：日志按时间追加，最后 40 条即最新；超限排序截断防止长日志撑爆
+      if (recent.length > 80) { recent.sort((x, y) => (x.t < y.t ? 1 : -1)); recent.length = 40; }
+    }
   }
+  } catch { return { daily: [], heat, recent: [] }; }
   recent.sort((x, y) => (x.t < y.t ? 1 : -1));
   recent = recent.slice(0, 40);
   const data = {
@@ -134,10 +152,8 @@ async function readHourly24() {
   if (h24Cache.data && h24Cache.key === key) return h24Cache.data;
   const since = Date.now() - 24 * 3600e3;
   const hours = new Map();
-  let text;
-  try { text = await readFile(USAGE_JSONL, 'utf8'); }
-  catch { return { hours: [] }; }
-  for (const line of text.split('\n')) {
+  try {
+    for await (const line of linesOf(USAGE_JSONL)) {
     if (!line) continue;
     let r; try { r = JSON.parse(line); } catch { continue; }
     // magpie 自家探活行（kind:"model_list", source:"probe"）不是真实调用，过滤（2026-11-04，实测占 9.5%）
@@ -153,17 +169,26 @@ async function readHourly24() {
     const b = h[side];
     b.calls++; b.input += r.in || 0; b.output += r.out || 0; b.cache_read += r.cache_read || 0;
   }
+  } catch { return { hours: [] }; }
   const data = { hours: [...hours.entries()].sort().map(([hour, v]) => ({ hour, ...v })) };
   h24Cache = { key, data };
   return data;
 }
 
-function aggregateAttribution(rows, { period, days, callers, source }) {
+// 百分位采样：每 provider 最多 512 个样本（确定性跨步替换），长日志不会把样本数组撑爆
+async function aggregateAttribution(rows, { period, days, callers, source }) {
+  const sampN = new Map();
+  const pushSample = (map, key, v, cap = 512) => {
+    let s = map.get(key); if (!s) { s = []; map.set(key, s); }
+    if (s.length < cap) { s.push(v); return; }
+    const c = (sampN.get(key) || 0) + 1; sampN.set(key, c);
+    s[c % cap] = v;
+  };
   const since = days > 0 ? Date.now() - days * 86400e3 : 0;
   const prov = new Map(), acct = new Map(), byDay = new Map(), byCaller = new Map(), hourly = new Map();
   const ttftSamples = new Map(), msSamples = new Map();
   const totals = { calls: 0, errors: 0, input: 0, output: 0, cache_read: 0, ttft_ms: 0, timed: 0 };
-  for (const r of rows) {
+  for await (const r of rows) {
     if (!r) continue;
     // magpie 自家探活行（kind:"model_list", source:"probe"）不是真实调用，过滤
     if (r.kind === 'model_list' || r.source === 'probe') continue;
@@ -193,14 +218,8 @@ function aggregateAttribution(rows, { period, days, callers, source }) {
     let a = prov.get(pn);
     if (!a) { a = { provider: pn, calls: 0, errors: 0, input: 0, output: 0, cache_read: 0 }; prov.set(pn, a); }
     a.calls++; a.errors += err; a.input += inTok; a.output += outTok; a.cache_read += cache;
-    if (r.ttft_ms > 0) {
-      let smp = ttftSamples.get(pn); if (!smp) { smp = []; ttftSamples.set(pn, smp); }
-      smp.push(r.ttft_ms);
-    }
-    if (r.ms > 0) {
-      let smp = msSamples.get(pn); if (!smp) { smp = []; msSamples.set(pn, smp); }
-      smp.push(r.ms);
-    }
+    if (r.ttft_ms > 0) pushSample(ttftSamples, pn, r.ttft_ms);
+    if (r.ms > 0) pushSample(msSamples, pn, r.ms);
     const an = r.providerAccount || '';
     if (an) {
       const k = pn + '\u0000' + an;
@@ -246,15 +265,15 @@ async function readAttribution(period, days, callers) {
   const bucket = Math.floor(Date.now() / (5 * 60000));
   const cacheKey = 'local:' + period + ':' + callers.join(',') + ':' + bucket;
   if (attrCache.data && attrCache.key === cacheKey) return attrCache.data;
-  let text;
-  try { text = await readFile(USAGE_JSONL, 'utf8'); }
-  catch { return null; }
-  const rows = [];
-  for (const line of text.split('\n')) {
-    if (!line) continue;
-    try { rows.push(JSON.parse(line)); } catch {}
+  async function* localRows() {
+    for await (const line of linesOf(USAGE_JSONL)) {
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      yield r;
+    }
   }
-  const data = aggregateAttribution(rows, { period, days, callers, source: 'local' });
+  let data;
+  try { data = await aggregateAttribution(localRows(), { period, days, callers, source: 'local' }); }
+  catch { return null; }
   attrCache = { key: cacheKey, data };
   return data;
 }
@@ -353,7 +372,7 @@ async function readRemoteAttribution(period, days, callers, sources) {
   }
   lastGoodRemote = picked.src;
   const rows = await fetchRemoteRows(picked.src, period, picked.page);
-  const data = aggregateAttribution(rows, { period, days, callers, source: 'remote' });
+  const data = await aggregateAttribution(rows, { period, days, callers, source: 'remote' });
   attrCache = { key: 'remote:' + picked.src.base + suffix, data };
   return data;
 }
@@ -506,8 +525,8 @@ async function handleRequest(req, res, url) {
     }
   }
 
-  // 页面访问口令：通过 ?key= 时种 cookie
-  if (PAGE_KEY && sameKey(url.searchParams.get('key') || '')) {
+  // 页面访问口令：通过 ?key= 时种 cookie（key 含 cookie 非法字符时跳过——头/URL 鉴权仍可用，避免 setHeader 抛错）
+  if (PAGE_KEY && /^[!-~]+$/.test(PAGE_KEY) && sameKey(url.searchParams.get('key') || '')) {
     res.setHeader('Set-Cookie', `dk=${PAGE_KEY}; Path=/; HttpOnly; Max-Age=31536000; SameSite=Lax`);
   }
 
@@ -552,11 +571,11 @@ async function handleRequest(req, res, url) {
     const inject = `<script>window.__DATA__=${JSON.stringify(data).replace(/</g, '\\u003c')};window.__NOTE__=${JSON.stringify(note)};</script>`;
     // 页面需要的口令只出现在这份 HTML 里；API 路由仍校验它，URL/书签里不出现
     const keyInject = PAGE_KEY ? `<script>window.__KEY__=${JSON.stringify(PAGE_KEY).replace(/</g, '\\u003c')};</script>` : '';
-    html = html.replace('<head>', '<head>' + keyInject + trap + inject);
+    html = html.replace('<head>', () => '<head>' + keyInject + trap + inject);
     // 插件页（沙盒 frame）里 magpie 会等 bridge 的 hello，等不到就 10s 判死。iOS Safari
     // 下插件页自己的 <script> 会被 WebKit 的 CSP 来源匹配拦掉，所以由本页补发一次 hello。
     const hello = `<script>(function(){if(window.parent===window)return;function s(){try{parent.postMessage({magpie:1,id:1,method:"hello"},"*")}catch(e){}}s();setTimeout(s,3000);setTimeout(s,8000)})();<\/script>`;
-    html = html.replace('</head>', hello + '</head>');
+    html = html.replace('</head>', () => hello + '</head>');
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
