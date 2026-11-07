@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import net from 'node:net';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -248,6 +249,42 @@ test('index.mjs: importing has no side effects, server() starts and awaits liste
   });
   assert.equal(r.status, 0, `child exit ${r.status}: ${r.stderr}`);
   assert.match(r.stdout, /LIFECYCLE-OK/);
+});
+
+test('plugin mode waits for a dying previous instance on the base port', async () => {
+  // When magpie restarts the plugin host, the previous generation lingers on the base
+  // port briefly (answers probes, then exits). The child must wait for it to release
+  // the port and bind it itself — not "reuse" the dying instance (which 502s the page).
+  const occupier = net.createServer(() => {});
+  const occupied = await new Promise((resolve) => {
+    occupier.once('error', () => resolve(false)); // base port busy (e.g. the live board) — still a valid scenario
+    occupier.listen(3455, '127.0.0.1', () => resolve(true));
+  });
+  const code = `
+    import('./index.mjs').then(async (m) => {
+      await m.default.server();
+      const r = await fetch('http://127.0.0.1:3455/api/health');
+      if (r.status !== 200) { console.error('FAIL: health ' + r.status); process.exit(1); }
+      console.log('BOUND-AFTER-WAIT');
+      process.exit(0);
+    }).catch((e) => { console.error('FAIL', e && e.message); process.exit(1); });
+  `;
+  const child = spawn(process.execPath, [path.join(root, 'index.mjs')], {
+    env: { ...process.env, MAGPIE_ADDR: '0.0.0.0:3425', PAGE_KEY: TEST_KEY, PAGE_KEY_FILE: path.join(os.tmpdir(), 'usage-board-zombie-key') },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { out += d; });
+  if (occupied) setTimeout(() => occupier.close(() => {}), 1200); // 1.2s 后释放端口
+  const exit = await new Promise((resolve) => {
+    const t = setTimeout(() => resolve({ code: null }), 30000);
+    child.once('close', (c) => { clearTimeout(t); resolve({ code: c }); }); // close = exit + stdio 刷完，避免漏捕最后的日志
+  });
+  if (occupied) occupier.close(() => {});
+  assert.equal(exit.code, 0, `child exit ${exit.code}: ${out.slice(0, 400)}`);
+  // 竞态窗口的正确结局：端口最终有服务——等到了就自己绑定，确认前代还活着就复用它
+  assert.match(out, /listening on http|— reusing it/);
 });
 
 test('the dashboard asks the local service for attribution', () => {

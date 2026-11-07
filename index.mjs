@@ -16,7 +16,7 @@ import path from "node:path";
 const here = path.dirname(fileURLToPath(import.meta.url));
 let starting = null;
 
-export default {
+const plugin = {
   id: "magpie-usage-board",
   server: async () => {
     if (!starting) {
@@ -33,3 +33,13 @@ export default {
     return {};
   },
 };
+
+export default plugin;
+
+// 手动启动入口：node index.mjs（与 server.mjs 直跑等价，走同一生命周期契约）
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  plugin.server().catch((e) => {
+    console.error(`[magpie-usage-board] not started: ${e?.message || e}`);
+    process.exit(1);
+  });
+}

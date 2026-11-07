@@ -8,13 +8,16 @@
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { createReadStream, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
+// 插件模式 = 由 magpie 宿主拉起（容器/桌面都会设 MAGPIE_ADDR）：宿主重启插件时上一代
+// 进程是「濒死」而非立即退出，base 口会短暂被占——见 tryBind 里的等待重试
+const PLUGIN_MODE = !!process.env.MAGPIE_ADDR;
 // 日志与带路页里对外展示的 host：监听 0.0.0.0/:: 这类地址时展示成 127.0.0.1，IPv6 补方括号
 const URL_HOST = HOST === '0.0.0.0' || HOST === '::' ? '127.0.0.1' : (HOST.includes(':') ? `[${HOST}]` : HOST);
 // 只有回环绑定才允许匿名 GET / 直接拿到看板（口令注入返回的 HTML）；公网实例必须先带口令，
@@ -776,10 +779,21 @@ function main(resolve, reject) {
   // listening 回调只挂一次：listen(port, cb) 的 cb 是 once('listening')，失败尝试残留的 cb
   // 会在后续成功 listen 时重复触发（实测日志双打）。
   server.once('listening', () => finish2(server.address().port));
+  let baseWait = 0;
   const tryBind = (p) => {
     server.listen(p, HOST);
     server.once('error', function onErr(e) {
       if (e.code !== 'EADDRINUSE' && e.code !== 'EACCES') { console.log(`[magpie-usage] not started: ${e.code || e.message}`); reject(new Error(`not started: ${e.code || e.message}`)); return; }
+      // 宿主重启竞态：插件模式下 base 口被占，多半是上一代同款实例濒死（能应答 ping 却
+      // 马上退出——复用它会让端口随后死掉，502）。先轮询等它退出再绑定，最多 ~19s；
+      // 真有别的同款实例常驻时，超时后落入既有探测/复用逻辑。带路页与 manifest 都指向
+      // base 口，不能向上扫描。
+      if (PLUGIN_MODE && p === PORT_BASE && startPort === null && baseWait < 19200) {
+        baseWait += 800;
+        console.log(`[magpie-usage] port ${PORT_BASE} busy — waiting for the previous instance to exit (${baseWait / 800}/24)`);
+        setTimeout(() => tryBind(p), 800);
+        return;
+      }
       if (p === PORT_BASE && startPort === null) {
         probe(`${URL_HOST}:${PORT_BASE}`).then((kind) => {
           if (kind >= 0) { // 同款（v2/v1 旧版）→ 静默复用，这是与 systemd/手动 node 并存的既定语义
