@@ -228,6 +228,7 @@ test('the lead page has no inline scripts and no key', () => {
   }
   assert.doesNotMatch(html, /[?&]key=/i);
   assert.doesNotMatch(html, /https?:\/\/(?!127\.0\.0\.1:3455)/i);
+  assert.doesNotMatch(html, /fetch\(/i); // the sandboxed lead page fetches nothing
   assert.match(html, /_magpie\/bridge\.js/);
   assert.match(html, /boot\.js/);
 });
