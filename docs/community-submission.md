@@ -14,7 +14,7 @@ publish and no dashboard form. One PR adds three things:
 ```json
 {
   "package": "@magpie-community/page-usage-board",
-  "name": "Usage board",
+  "name": "Usage Board",
   "kind": "page",
   "community": true,
   "summary": {
@@ -52,7 +52,10 @@ Check before opening the PR:
 - `npm test` passes (auth, `Host`, traversal, lead-page, package metadata).
 - `npm pack --dry-run` contains no `remote.js`, no page key, and includes `LICENSE`.
 - The host part guards every route with a token **and checks `Host`** (community requirement
-  for pages that navigate to a local service).
+  for pages that navigate to a local service). Three deliberate anonymous exemptions, filed
+  here for review: `GET /api/ping` and `GET /api/health` (liveness fingerprints — they return
+  `{ok:true}` only, no data), and the board page itself on a loopback bind, where the token is
+  injected into the served HTML rather than typed.
 - The hosted page uses `window.magpie.service` when present, so a remote `magpie web`
   deployment keeps the frame under magpie's own origin and key.
 - The lead page is script-free; the board itself only calls its own service on

@@ -44,7 +44,13 @@ print([k['secret'] for k in d if k['name'] == 'cloud'][0])
 PY
 ) || UPKEY=$(grep -o '"secret": *"[^"]*"' "$MAGPIE_CONF_DIR/caller-keys.json" | head -1)
 
-# systemd 服务
+# systemd 服务：口令类变量进独立 env 文件（600 权限），unit 本体保持可读
+umask 077
+cat > "$INSTALL_DIR/magpie-usage.env" <<ENV
+PAGE_KEY=$PAGE_KEY
+MAGPIE_KEY=$UPKEY
+ENV
+chmod 600 "$INSTALL_DIR/magpie-usage.env"
 cat > /etc/systemd/system/magpie-usage.service <<UNIT
 [Unit]
 Description=magpie usage dashboard
@@ -52,14 +58,13 @@ After=network.target docker.service
 
 [Service]
 ExecStart=$BUN $INSTALL_DIR/server.mjs
+EnvironmentFile=$INSTALL_DIR/magpie-usage.env
 Environment=PORT=$PORT
 Environment=HOST=0.0.0.0
 Environment=GATEWAY=$GATEWAY
-Environment=MAGPIE_KEY=$UPKEY
 Environment=USAGE_JSONL=$MAGPIE_CONF_DIR/usage.jsonl
 Environment=ALLOWED_HOSTS=${ALLOWED_HOSTS:-}
 Environment=DATA_DIR=$INSTALL_DIR/data
-Environment=PAGE_KEY=$PAGE_KEY
 Restart=always
 RestartSec=5
 

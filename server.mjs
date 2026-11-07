@@ -19,7 +19,9 @@ const HOST = process.env.HOST || '127.0.0.1';
 const URL_HOST = HOST === '0.0.0.0' || HOST === '::' ? '127.0.0.1' : (HOST.includes(':') ? `[${HOST}]` : HOST);
 // 只有回环绑定才允许匿名 GET / 直接拿到看板（口令注入返回的 HTML）；公网实例必须先带口令，
 // 否则等于向任何访问者公开页面数据和口令。
-const LOOPBACK_BIND = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1' || HOST === '::';
+const LOOPBACK_BIND = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
+// 注意：'::' 与 0.0.0.0 同为通配监听（dual-stack），绝不能算回环——否则公网实例会匿名
+// 交出注入了口令的页面（P0 复审项）；需要通配监听时请显式设 ALLOWED_HOSTS 并依赖口令。
 const GATEWAY = (process.env.GATEWAY || 'http://127.0.0.1:3425').replace(/\/+$/, '');
 const KEY = process.env.MAGPIE_KEY || '';
 const USAGE_JSONL = process.env.USAGE_JSONL || [
@@ -65,7 +67,7 @@ const json = (res, code, obj) => {
 async function upstream(p) {
   const r = await fetch(GATEWAY + p, {
     headers: KEY ? { Authorization: `Bearer ${KEY}` } : {},
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(12000),
   });
   const body = await r.text();
   try { return { code: r.status, json: JSON.parse(body) }; }
@@ -104,7 +106,8 @@ async function readDetail(days) {
     if (r.kind === 'model_list' || r.source === 'probe') continue;
     const ts = r.t ? Date.parse(r.t) : NaN;
     if (!Number.isFinite(ts) || ts < since) continue;
-    const day = r.t.slice(0, 10);
+    const day = typeof r.t === 'string' ? r.t.slice(0, 10) : '';
+    if (!day) continue; // 脏行（t 非字符串）跳过本行，绝不静默清空整张图
     const prov = r.provider || 'unknown';
     let dp = daily.get(day); if (!dp) { dp = new Map(); daily.set(day, dp); }
     let a = dp.get(prov);
@@ -291,9 +294,16 @@ function remoteSources() {
   const out = [];
   const push = (base, key) => {
     const b = String(base || '').replace(/\/+$/, '').replace(/\/v1$/, '');
-    if (/^https?:\/\//.test(b) && key && !out.some((x) => x.base === b && x.key === key)) out.push({ base: b, key, callers });
+    let u; try { u = new URL(b); } catch { return; }
+    // Bearer key 只走 https；明文 http 仅限本机回环（本地测试用）
+    if (u.protocol !== 'https:' && !['127.0.0.1', 'localhost', '::1'].includes(u.hostname)) return;
+    if (key && !out.some((x) => x.base === b && x.key === key)) out.push({ base: b, key, callers });
   };
-  if (process.env.REMOTE_BASE && process.env.REMOTE_KEY) push(process.env.REMOTE_BASE, process.env.REMOTE_KEY);
+  if (process.env.REMOTE_BASE && process.env.REMOTE_KEY) {
+    // 显式 override 独占：设置 REMOTE_BASE/KEY 时不再读 providers.json（文档承诺的语义）
+    push(process.env.REMOTE_BASE, process.env.REMOTE_KEY);
+    return out;
+  }
   try {
     const j = JSON.parse(readFileSync(MAGPIE_PROVIDERS, 'utf8'));
     for (const p of j.providers || []) {
@@ -377,7 +387,8 @@ async function readRemoteAttribution(period, days, callers, sources) {
   return data;
 }
 function sameKey(given) {
-  if (typeof given !== 'string' || given.length !== PAGE_KEY.length) return false;
+  // 先比字节长度：JS 字符串长度 ≠ 字节长（非 ASCII 自定义 key 曾让 timingSafeEqual 抛错→鉴权全 500）
+  if (typeof given !== 'string' || Buffer.byteLength(given) !== Buffer.byteLength(PAGE_KEY)) return false;
   return timingSafeEqual(Buffer.from(given), Buffer.from(PAGE_KEY));
 }
 
@@ -471,7 +482,7 @@ async function handleRequest(req, res, url) {
     }
     if (!cors(req, res)) { res.writeHead(403); return res.end('cross-origin reads not allowed'); }
     // health 免鉴权：vps-init.sh 探活与同款服务识别都依赖匿名访问（响应里无口令、无用量数据）
-    if (p === '/api/health') return json(res, 200, { ok: true, gateway: GATEWAY, jsonl: existsSync(USAGE_JSONL) });
+    if (p === '/api/health') return json(res, 200, { ok: true, jsonl: existsSync(USAGE_JSONL) });
     if (!authed(req, url)) return json(res, 401, { error: '需要访问口令：URL 后加 ?key=…' });
     try {
       if (p === '/api/quotas') {
@@ -493,7 +504,8 @@ async function handleRequest(req, res, url) {
           upstream('/v1/magpie/limit?format=json').catch(() => null),
         ]);
         return json(res, u.code === 200 ? 200 : u.code, { period, usage: u.json, detail,
-          limit: (lim && lim.code === 200 && lim.json) || undefined });
+          limit: (lim && lim.code === 200 && lim.json) || undefined,
+          note: u.code === 200 ? undefined : '用量接口 ' + u.code });
       }
       // /api/icon/ 已退役（2026-11-04）：前端 logo 全走 QLOGOS manifest，仅 README 提及历史
       if (p === '/api/hourly') {
@@ -559,11 +571,11 @@ async function handleRequest(req, res, url) {
     try {
       const period = ['7d', '30d', 'all'].includes(url.searchParams.get('period')) ? url.searchParams.get('period') : '30d';
       const days = period === '7d' ? 7 : period === '30d' ? 30 : 0;
-      const [u, detail] = await Promise.all([
+      const [u, detail, q] = await Promise.all([
         upstream('/v1/magpie/usage?period=' + period),
         readDetail(days),
+        upstream('/v1/magpie/quotas'),
       ]);
-      const q = await upstream('/v1/magpie/quotas');
       data = { period, usage: u.json, quotas: q.json?.data || [], detail };
       if (u.code !== 200) note = '用量接口 ' + u.code;
     } catch (e) { note = String(e && e.message || e); }
@@ -643,7 +655,9 @@ function subOf(pkgName, dirName) {
   s = s.replace(/^@[^/]+\//, '');
   s = s.replace(/^(opencode-|magpie-|my-|@roadkid\/opencode-)/, '');
   s = s.replace(/-(auth|plugin|page|free-auth)$/i, '');
-  return s.toLowerCase();
+  // 第三方包名不可信：白名单净化，防 writeLogo 路径穿越（../、/、空字节等一律丢弃）
+  s = s.toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[.-]+/, '').slice(0, 40);
+  return s;
 }
 function scanLogos() {
   const out = {};
@@ -715,9 +729,10 @@ function writeLogo(sub, ext, buf) {
   try { mkdirSync(LOGOS_DIR, { recursive: true }); writeFileSync(path.join(LOGOS_DIR, sub + '.' + ext), buf); } catch {}
 }
 function fetchOne(sub, url, out) {
+  if (!/^https:\/\//.test(url)) return; // 品牌图标只从 https 下载
   fetch(url, { signal: AbortSignal.timeout(10000) })
     .then(r => (r.ok ? r.arrayBuffer() : null))
-    .then(ab => { if (ab && ab.byteLength > 200) { const ext = (/\.ico($|\?)/.test(url) ? 'ico' : /\.svg/.test(url) ? 'svg' : 'png'); writeLogo(sub, ext, Buffer.from(ab)); out[sub] = '/logos/' + sub + '.' + ext; try { writeFileSync(path.join(LOGOS_DIR, 'manifest.json'), JSON.stringify(out)); } catch {} } })
+    .then(ab => { if (ab && ab.byteLength > 200 && ab.byteLength <= 2 * 1024 * 1024) { const ext = (/\.ico($|\?)/.test(url) ? 'ico' : /\.svg/.test(url) ? 'svg' : 'png'); writeLogo(sub, ext, Buffer.from(ab)); out[sub] = '/logos/' + sub + '.' + ext; try { writeFileSync(path.join(LOGOS_DIR, 'manifest.json'), JSON.stringify(out)); } catch {} } })
     .catch(() => {});
 }
 function ensureLogos() {

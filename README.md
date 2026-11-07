@@ -107,7 +107,8 @@ host. Two supported modes — proxy auth (no app key) or an app key — are in
 
 ## Data and privacy
 
-- Reads this machine's `usage.jsonl` and magpie's local gateway API. There is no telemetry.
+- Reads this machine's `usage.jsonl` and magpie's local gateway API. The board itself sends
+  no telemetry (on proxied public deployments Cloudflare may inject its own analytics beacon).
 - **Optional** remote attribution makes read-only requests to the configured remote magpie's
   own `/v1/magpie/usage/requests`, using the provider key already in
   `~/.config/magpie/providers.json`. Rows are filtered to `REMOTE_CALLERS` and aggregated
@@ -119,6 +120,9 @@ host. Two supported modes — proxy auth (no app key) or an app key — are in
   cost, timing and error counts.
 
 ## Develop
+
+These commands run from a git checkout — the npm package (`npm pack`) ships the
+runtime only (no `deploy.sh`, `tools/`, `test/` or this docs directory).
 
 ```sh
 node --test          # auth/host/traversal, caller filtering, package metadata

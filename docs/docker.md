@@ -107,6 +107,6 @@ names, so a direct public request fails closed.
 
 ## Health and logs
 
-- `GET /api/health` is anonymous and returns no data; it is the container healthcheck.
+- `GET /api/health` is anonymous and returns only `{ok, jsonl}` — no gateway address, no data.
 - The first-run URL and the effective port are in `docker compose logs`.
 - Data is read-only from the container's point of view; `usage.jsonl` is never modified.

@@ -1,7 +1,9 @@
 // npm pack / publish 前的守卫：公开包里不能出现口令或本机部署配置。
 // 这些文件不进 git（见 .gitignore），但 deploy.sh 会把它们生成为运行时副本，
 // 在错误的目录里执行 npm pack 就会把 key 带上船。
-import { existsSync, readFileSync } from 'node:fs';
+// 同时做布局守卫（community-submission.md 的 layout trap）：README/docs 承诺的
+// 文件（docs/、Docker 三件套）必须真实存在，文档相对链接必须可达——否则合并后全 404。
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +32,45 @@ for (const f of pkg.files) {
   if (!existsSync(path.join(root, f))) problems.push(`files entry is missing: ${f}`);
 }
 if (!pkg.files.includes('LICENSE')) problems.push('files must include LICENSE');
+
+// 布局守卫：README 与 self-hosting 承诺的部署文件必须随仓库走
+for (const f of ['docs', 'Dockerfile', 'docker-compose.yml', '.env.example', 'README.md', 'LICENSE']) {
+  if (!existsSync(path.join(root, f))) problems.push(`repo tree must contain ${f} (docs/Docker references 404 otherwise)`);
+}
+// README 与 docs 里的 .md 相对链接必须指向存在的文件
+function walk(dir) {
+  let out = [];
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+    const full = path.join(dir, e.name);
+    if (statSync(full).isDirectory()) out = out.concat(walk(full));
+    else out.push(full);
+  }
+  return out;
+}
+for (const doc of ['README.md', ...walk('docs').filter((f) => f.endsWith('.md'))]) {
+  const text = readFileSync(path.join(root, doc), 'utf8');
+  for (const m of text.matchAll(/\]\(([^)#]+?\.md)\)/g)) {
+    const target = path.resolve(path.dirname(path.join(root, doc)), m[1]);
+    if (!existsSync(target)) problems.push(`${doc} links to missing file: ${m[1]}`);
+  }
+}
+// 全量扫描 files 条目覆盖到的文本文件：口令模式不允许出现在任何被打包的位置
+const pkgFiles = [];
+for (const entry of pkg.files) {
+  const full = path.join(root, entry);
+  if (!existsSync(full)) continue;
+  if (statSync(full).isFile()) pkgFiles.push(full);
+  else pkgFiles.push(...walk(full));
+}
+for (const full of pkgFiles) {
+  let text;
+  try { text = readFileSync(full, 'utf8'); } catch { continue; }
+  const rel = path.relative(root, full);
+  if (secret.test(text)) problems.push(`${rel} contains what looks like a page key`);
+}
 
 if (problems.length) {
   console.error('✗ cannot pack:\n  ' + problems.join('\n  '));

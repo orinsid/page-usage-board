@@ -198,6 +198,21 @@ test('a public bind never serves the board without the token', async () => {
   assert.doesNotMatch(String(page.headers.location || ''), new RegExp(TEST_KEY));
 });
 
+test('HOST=:: is a wildcard bind, never treated as loopback (P0 regression)', async () => {
+  // '::' listens on all interfaces (dual-stack); treating it as loopback handed the
+  // key-injected page to anonymous visitors. It must behave like 0.0.0.0.
+  const s = start({ HOST: '::', ALLOWED_HOSTS: 'dash.example' });
+  try {
+    const port = await s.ready;
+    const page = await request(port, '/', { headers: { Host: 'dash.example:443' } });
+    assert.equal(page.status, 401);
+    assert.doesNotMatch(String(page.headers.location || ''), new RegExp(TEST_KEY));
+    assert.equal(String(page.body || '').includes('__KEY__'), false);
+  } finally {
+    s.c.kill();
+  }
+});
+
 test('the dashboard asks the local service for attribution', () => {
   const html = readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
   assert.match(html, /api\/attribution\?period=/);

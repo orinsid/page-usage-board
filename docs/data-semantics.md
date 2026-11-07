@@ -52,7 +52,7 @@ accounts (different phone numbers or keys) are different quotas and stay as sepa
 ## Remote cards have three states
 
 - No remote data source (e.g. a VPS-only install): hide the TTFT and account cards.
-- Source configured but the fetch fails (15 s timeout): show a red error card explaining it.
+- Source configured but the fetch fails (45 s client timeout, 10 s per remote page server-side): show a red error card explaining it.
 - Success: show the data.
 
 A dead source must never make the card vanish without a trace — silence looks like "zero

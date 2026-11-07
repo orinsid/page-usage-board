@@ -1066,13 +1066,15 @@ setInterval(function(){
   if(bt.dataset.err!==t){bt.dataset.err=t;bt.title=e.join(String.fromCharCode(10));bt.innerHTML=t?t.replace(/&/g,'&amp;').replace(/</g,'&lt;'):'';bt.style.display=t?'':'none';bt.style.color=t?'#f85149':'';}
 },1500);
 
+// 上游采集异常必须可见（静默显 0 会误导，data-semantics 红线）：首屏用 __NOTE__，刷新用响应里的 note
+function showNote(t){
+  if(!t || document.getElementById('noteBanner'))return;
+  const n=document.createElement('div');n.id='noteBanner';n.className='err';
+  n.textContent='⚠ '+t+' —— 以下数值可能不完整';
+  document.querySelector('.sub').after(n);
+}
 function paint(d){
-  // 服务端注入的 __NOTE__ 非空 = 上游采集异常：必须可见，静默显 0 会误导（data-semantics 红线）
-  if(window.__NOTE__ && !document.getElementById('noteBanner')){
-    const n=document.createElement('div');n.id='noteBanner';n.className='err';
-    n.textContent='⚠ '+window.__NOTE__+' —— 以下数值可能不完整';
-    document.querySelector('.sub').after(n);
-  }
+  showNote(window.__NOTE__);
   const u=d.usage||{};
   lastModels=u.models||[];
   renderKpis(u);
@@ -1096,7 +1098,9 @@ async function load(){
   try{
     const r=await fetch(auth('api/overview?period='+period),{headers:hf()});
     if(r.status===401)throw new Error('需要口令（地址后加 ?key=…）');
-    const d=await r.json();
+    const jd=await r.json();
+    if(jd.note)showNote(jd.note); // 网关异常时刷新路径也要可见，不能静默显 0
+    const d=jd;
     if(d.error)throw new Error(typeof d.error==='string'?d.error:(d.error.message||JSON.stringify(d.error)));
     const u=d.usage;
     lastModels=u.models||[];
