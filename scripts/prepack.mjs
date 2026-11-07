@@ -33,9 +33,16 @@ for (const f of pkg.files) {
 }
 if (!pkg.files.includes('LICENSE')) problems.push('files must include LICENSE');
 
-// 布局守卫：README 与 self-hosting 承诺的部署文件必须随仓库走
-for (const f of ['docs', 'Dockerfile', 'docker-compose.yml', '.env.example', 'README.md', 'LICENSE']) {
-  if (!existsSync(path.join(root, f))) problems.push(`repo tree must contain ${f} (docs/Docker references 404 otherwise)`);
+// 布局守卫：README 与 self-hosting 承诺的部署文件必须随仓库走。
+// 仅在 git checkout 里强制（tarball 解包环境没有 Docker 三件套，属正常）
+const inCheckout = existsSync(path.join(root, '.git'));
+if (inCheckout) {
+  for (const f of ['docs', 'Dockerfile', 'docker-compose.yml', '.env.example', 'README.md', 'LICENSE', 'NOTICE', 'LICENSES']) {
+    if (!existsSync(path.join(root, f))) problems.push(`repo tree must contain ${f} (docs/Docker references 404 otherwise)`);
+  }
+  for (const f of ['docs', 'scripts', 'NOTICE', 'LICENSES']) {
+    if (!pkg.files.includes(f)) problems.push(`files must include ${f} (docs/NOTICE references 404 on npm otherwise)`);
+  }
 }
 // README 与 docs 里的 .md 相对链接必须指向存在的文件
 function walk(dir) {

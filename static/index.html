@@ -716,7 +716,7 @@ function renderKpis(u){
   $('#kpis').innerHTML=k.map(([l,,f,s,vt])=>{
     const segs=s?s.split(' · '):[];
     const inner=segs.length>1?`<span class="roll">${segs.map(x=>'<span>'+esc(x)+'</span>').join('')}</span>`:esc(s||'');
-    return `<div class="kpi"><div class="l">${l}</div><div class="v"></div><div class="s" title="${s}">${inner}</div></div>`;
+    return `<div class="kpi"><div class="l">${l}</div><div class="v"></div><div class="s" title="${esc(s)}">${inner}</div></div>`;
   }).join('');
   k.forEach((it,i)=>{const el=$('#kpis').children[i].querySelector('.v');el.title=it[4]||it[2](it[1]);animNum(el,it[0],it[1],it[2]);});
   startRotors();
@@ -1046,7 +1046,7 @@ function renderRecent(rows){
     return `<tr><td>${esc(t)}</td><td>${esc(r.agent||'')}</td><td>${esc(r.provider||'')}</td><td>${esc(r.model||'')}</td>
       <td class="num">${fmt(r.in)}</td><td class="num">${fmt(r.out)}</td><td class="num">${r.ttft!=null?(r.ttft/1000).toFixed(1)+' 秒':'—'}</td>
       <td class="num">${r.ms!=null?(r.ms/1000).toFixed(1)+' 秒':'—'}</td>
-      <td><span class="st ${st}"></span>${r.status}${retry?` · 重试${r.tries-1}`:''}</td></tr>`;
+      <td><span class="st ${st}"></span>${esc(String(r.status))}${retry?` · 重试${esc(String(r.tries-1))}`:''}</td></tr>`;
   }).join('')||'<tr><td colspan="9" class="err">没有请求记录（usage.jsonl 不可用）</td></tr>';
 }
 

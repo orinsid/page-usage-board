@@ -13,7 +13,8 @@
     "README.md",
     "scripts",
     "NOTICE",
-    "docs"
+    "docs",
+    "LICENSES"
   ],
   "scripts": {
     "start": "node server.mjs",
@@ -21,7 +22,7 @@
     "prepack": "node scripts/prepack.mjs"
   },
   "engines": {
-    "node": ">=20",
+    "node": ">=22",
     "magpie": ">=0.1.1340"
   },
   "keywords": [

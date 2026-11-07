@@ -5,10 +5,12 @@ This product includes third-party software and assets:
 
 * Apache ECharts (static/echarts.min.js)
   Copyright 2018-2026 Apache Software Foundation.
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  A copy of the license header is included in the file itself. The full
-  license text is available at https://www.apache.org/licenses/LICENSE-2.0
+  Licensed under the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License. The full license
+  text ships with this distribution at LICENSES/Apache-2.0.txt and is also
+  available at https://www.apache.org/licenses/LICENSE-2.0
+  Provenance: custom build from the npm `echarts@5.5.1` package via
+  `build/echarts-entry.mjs` (see that file for the included components).
 
 * Brand logos
   Provider logos are not bundled with this package: at service startup the

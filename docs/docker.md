@@ -62,6 +62,12 @@ Loopback names (`127.0.0.1`, `localhost`) are accepted with **any** port — por
 (`127.0.0.1:3456:3455`), tunnels and a proxy that rewrites `Host` to `127.0.0.1` all work
 without `ALLOWED_HOSTS`. Public names are never accepted by port alone.
 
+Page gate note (Mode B): with a `PAGE_KEY` set, the board page itself requires the token on
+standalone deployments **even when the proxy rewrites `Host` to `127.0.0.1`** — the
+anonymous injected page is reserved for plugin mode, where the magpie host is the outer
+gate. A proxy-fronted Mode B therefore needs `ALLOWED_HOSTS` (or the bookmarked `?key=`
+URL, which sets the cookie).
+
 ## Mode B — the app authenticates
 
 Under compose, leaving `PAGE_KEY` unset does not generate a key — it disables auth (see

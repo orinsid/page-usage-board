@@ -590,10 +590,11 @@ async function handleRequest(req, res, url) {
   // 口令门只拦看板页本身：它内联了全量数据和口令。static/ 下的 echarts、logo 等
   // 不含数据，匿名可取——沙盒 frame 不带 cookie，旧的"子资源 URL 带 key"做法会把
   // 口令泄进代理日志，已废弃。
-  // 匿名页面门只在「未声明任何公共名」时开放：ALLOWED_HOSTS 非空 = 存在反代/公网入口，
-  // 此时页面必须带口令（否则经代理的匿名请求会拿到注入了口令的页面——P1 复审实测绕过）。
-  // 未设 ALLOWED_HOSTS 的纯本机/默认部署不受影响。
-  const openPage = file === '/index.html' && LOOPBACK_BIND && ALLOWED_HOSTS.length === 0;
+  // 匿名页面门只在「插件模式 + 未声明公共名」时开放：magpie 宿主是外层门，本机用户
+  // 即所有者。独立部署（node server.mjs/systemd/Docker）即使回环绑定，设置了 PAGE_KEY
+  // 就必须带口令——同机反代把 Host 改写成 127.0.0.1 时（nginx 默认 $proxy_host 即是），
+  // 匿名页面门会被经代理的匿名请求命中（P1 复审实测绕过）。
+  const openPage = file === '/index.html' && LOOPBACK_BIND && ALLOWED_HOSTS.length === 0 && PLUGIN_MODE;
   if (file === '/index.html' && PAGE_KEY && !authed(req, url) && !openPage) { res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('需要访问口令：在 URL 后加 ?key=…'); }
 
   // 首页：服务端把数据直接内联进 HTML（window.__DATA__），页面加载即有数据，
@@ -860,6 +861,13 @@ function main(resolve, reject) {
           } else tryBind(p + 1); // 异种占用 → 向上找空闲口
         }).catch(() => tryBind(p + 1)); // 探测本身异常 → 视为异种占用继续扫描
       } else if (startPort === null && p < PORT_BASE + PORT_SPAN) {
+        // 插件模式下向上扫描无意义：带路页与 manifest 都指向 base 口，扫上去页面也连不上
+        if (PLUGIN_MODE && p === PORT_BASE) {
+          const err = new Error(`port ${PORT_BASE} is busy and the lead page targets it — free the port or set PORT explicitly`);
+          console.log(`[magpie-usage] not started: ${err.message}`);
+          reject(err);
+          return;
+        }
         tryBind(p + 1); // 自动模式继续向上扫
       } else if (startPort === null) {
         server.listen(0, HOST); // 扫满仍无空口 → 系统挑
@@ -883,7 +891,7 @@ function main(resolve, reject) {
   // 绑定成功：日志打印实际生效的访问地址（是否含 key 见 openUrl）；带路页只写固定端口，
   // 口令由服务端注入返回的 HTML，所以这里不再改写任何页面文件。
   function finish2(port) {
-    console.log(`[magpie-usage] listening on http://${URL_HOST}:${port}/  gateway=${GATEWAY}  jsonl=${USAGE_JSONL}(${existsSync(USAGE_JSONL) ? 'ok' : 'missing'})`);
+    console.log(`[magpie-usage] listening on http://${URL_HOST}:${port}/  gateway=${GATEWAY}  jsonl=${USAGE_JSONL}(${existsSync(USAGE_JSONL) ? 'ok' : 'missing'})  plugin=${PLUGIN_MODE}`);
     console.log(`[magpie-usage] open ${openUrl(port)}`);
     server.on('error', (e) => console.log(`[magpie-usage] server error: ${e.message}`)); // 绑定后的常驻兜底
     resolve(port);

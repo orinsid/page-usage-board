@@ -24,17 +24,20 @@ documented in [`docs/data-semantics.md`](docs/data-semantics.md).
 
 Two layers, the same shape the community uses for host-part pages:
 
-1. `index.mjs` is an OpenCode v1 plugin loaded by magpie's Bun host. On load it starts
-   `server.mjs`, a zero-dependency Node 18+/Bun HTTP service on `127.0.0.1:3455`.
+1. `index.mjs` is an OpenCode v1 plugin loaded by magpie's Bun host. When magpie calls its
+   `server()` entry it starts `server.mjs`, a zero-dependency Node 22+/Bun HTTP service on
+   `127.0.0.1:3455`.
 2. `page/index.html` + `page/boot.js` is the hosted page. It asks the bridge for
    `magpie.service` first: when `magpie web` runs on another machine it proxies the local
    service under magpie's own origin, so **magpie's own key/auth is the outer gate** and the
    page never leaves that origin. A desktop window has no service, so it falls back to
    `http://127.0.0.1:3455/`. An 8-second `<meta refresh>` is the fallback if the boot script
    is blocked. The service injects its own token into the board HTML (`window.__KEY__`) and
-   checks it on `/api/*`; in plugin/loopback mode the token is generated, never typed, and
-   never appears in a URL, the repository or the package. A standalone start on a non-loopback
-   bind is the one exception: the first start prints a one-time URL with the key in it.
+   checks it on `/api/*`; in plugin mode (the magpie host is the outer gate) the token is
+   generated, never typed, and never appears in a URL, the repository or the package. A
+   standalone deployment with a `PAGE_KEY` always requires it — the first start prints a
+   one-time URL with the key in it (generated keys only; env-provided keys stay in the
+   environment).
 
 The 8-second `<meta refresh>` is deliberate: an earlier all-script page could be declared dead
 by the host after 10 seconds when the bridge handshake raced; the meta fallback still
@@ -122,6 +125,12 @@ host. Two supported modes — proxy auth (no app key) or an app key — are in
   key. Set `ATTRIBUTION=local` to keep everything on this machine.
 - The page and its assets are served from `127.0.0.1`. API routes require the page token
   (query, cookie or `x-dash-key`), and every route checks `Host` to block DNS rebinding.
+  Deliberate anonymous exemptions: `GET /api/ping` and `GET /api/health` (liveness
+  fingerprints, no data), `/static/*` and `/logos/*` assets (no data), and the board page
+  itself in plugin mode on a loopback bind (the token is injected into the served HTML).
+  The trust boundary is the local machine: other local users can reach a loopback-bound
+  board, and the remote attribution reads every caller's rows on the shared remote magpie
+  (filtered for display, disclosed in the Pages table).
 - No prompts or message bodies are read — the service aggregates model, provider, tokens,
   cost, timing and error counts.
 

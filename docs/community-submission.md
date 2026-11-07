@@ -37,22 +37,21 @@ requires all three texts to match).
 | [page-usage-board](packages/page-usage-board) | Full usage board: quota cards with expiry tiers, daily and per-provider charts, 24-hour cache-hit and token curves, optional remote attribution and account detail | none (the page reads nothing through the bridge; its local service reads your usage.jsonl, magpie's usage/quota API, and — for optional remote attribution — your magpie config's provider key to query the configured remote magpie) |
 ```
 
-## The `docs/` layout trap
+## The packaging layout
 
-`npm pack` ships only what the `files` field in package.json lists, and `docs/` is not among
-them. If the PR copies just the pack output, the merged package has no `docs/` directory and
-every relative link in README.md — `docs/docker.md`, `docs/self-hosting.md`,
-`docs/data-semantics.md` — 404s, along with the Docker files those pages tell readers to use.
+`npm pack` ships what the `files` field in package.json lists — which already includes the
+runtime, `docs/`, `scripts/` (the `prepack` guard lives there) and `NOTICE`. The `prepack`
+hook also asserts the checkout contains the `Dockerfile`/`docker-compose.yml`/`.env.example`
+trio that `docs/docker.md` tells readers about, and validates every relative link in
+README.md and `docs/*.md`.
 
 Correct layout for `packages/page-usage-board/`: the `npm pack` output, plus `LICENSE`,
-`README.md`, the whole `docs/` directory, `Dockerfile`, `docker-compose.yml` and
-`.env.example` (referenced by `docs/docker.md`), and the development files the package
-metadata points at: `scripts/` (the `prepack` hook lives there — CI fails without it),
-`test/`, `tools/` and `deploy.sh`.
+`Dockerfile`, `docker-compose.yml`, `.env.example`, `test/` and `deploy.sh` (development
+files the README references — they do not need to be in `files`).
 
 Check before opening the PR:
 
-- `docs/` (and the Docker files) are in the staged tree, not only in the pack output.
+- `docs/` and the Docker files are in the staged tree.
 - Every relative link in README.md and `docs/*.md` resolves inside
   `packages/page-usage-board/` — click through them in the GitHub PR preview.
 

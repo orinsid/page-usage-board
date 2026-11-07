@@ -79,7 +79,7 @@ async function waitFor(cond, ms = 3000) {
 
 let mainLog;
 before(async () => {
-  const s = start();
+  const s = start({ MAGPIE_ADDR: '0.0.0.0:3425' }); // 主测试服务器 = 插件模式（匿名注入页面是插件模式语义）
   child = s.c;
   tmp = s.dir;
   mainLog = s.captured;
@@ -312,6 +312,34 @@ test('plugin mode waits for a dying previous instance on the base port', async (
   assert.equal(exit.code, 0, `child exit ${exit.code}: ${out.slice(0, 400)}`);
   // 竞态窗口的正确结局：端口最终有服务——等到了就自己绑定，确认前代还活着就复用它
   assert.match(out, /listening on http|— reusing it/);
+});
+
+test('standalone with PAGE_KEY: a Host-rewriting proxy cannot open the page anonymously', async () => {
+  // nginx's default proxy_set_header Host $proxy_host rewrites Host to 127.0.0.1:<port> —
+  // standalone deployments must still require the token (only plugin mode trusts the host).
+  const s = start({ HOST: '127.0.0.1' });
+  try {
+    const port = await s.ready;
+    const page = await request(port, '/', { headers: { Host: '127.0.0.1:' + port } });
+    assert.equal(page.status, 401);
+    assert.equal(String(page.body || '').includes('__KEY__'), false);
+    const withKey = await request(port, '/?key=' + TEST_KEY, { headers: { Host: '127.0.0.1:' + port } });
+    assert.equal(withKey.status, 200);
+  } finally {
+    s.c.kill();
+  }
+});
+
+test('plugin mode keeps the anonymous injected page on loopback', async () => {
+  const s = start({ HOST: '127.0.0.1', MAGPIE_ADDR: '0.0.0.0:3425' });
+  try {
+    const port = await s.ready;
+    const page = await request(port, '/', { headers: { Host: `127.0.0.1:${port}` } });
+    assert.equal(page.status, 200);
+    assert.match(String(page.body), /__KEY__/);
+  } finally {
+    s.c.kill();
+  }
 });
 
 test('the dashboard asks the local service for attribution', () => {

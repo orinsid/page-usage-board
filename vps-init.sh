@@ -45,13 +45,21 @@ d = json.load(open(os.environ['CALLER_KEYS']))
 print([k['secret'] for k in d if k['name'] == 'cloud'][0])
 PY
 )
+# 专用系统用户需要能执行 bun：复制一份到安装目录（/root 下的原始路径对非 root 不可达）
+mkdir -p "$INSTALL_DIR/bin"
+cp "$BUN" "$INSTALL_DIR/bin/bun"
+chmod 755 "$INSTALL_DIR/bin/bun"
+BUN="$INSTALL_DIR/bin/bun"
 
-# systemd 服务：口令类变量进独立 env 文件（600 权限），unit 本体保持可读
+# systemd 服务：专用系统用户 + 口令类变量进独立 env 文件（600 权限），unit 本体保持可读
 umask 077
+id magpie-usage > /dev/null 2>&1 || useradd --system --home "$INSTALL_DIR" --shell /usr/sbin/nologin magpie-usage
+chown -R magpie-usage:magpie-usage "$INSTALL_DIR"
 cat > "$INSTALL_DIR/magpie-usage.env" <<ENV
 PAGE_KEY=$PAGE_KEY
 MAGPIE_KEY=$UPKEY
 ENV
+chown magpie-usage:magpie-usage "$INSTALL_DIR/magpie-usage.env"
 chmod 600 "$INSTALL_DIR/magpie-usage.env"
 cat > /etc/systemd/system/magpie-usage.service <<UNIT
 [Unit]
@@ -59,6 +67,8 @@ Description=magpie usage dashboard
 After=network.target docker.service
 
 [Service]
+User=magpie-usage
+Group=magpie-usage
 ExecStart=$BUN $INSTALL_DIR/server.mjs
 EnvironmentFile=$INSTALL_DIR/magpie-usage.env
 Environment=PORT=$PORT
