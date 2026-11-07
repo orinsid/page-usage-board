@@ -10,7 +10,8 @@ ENV NODE_ENV=production \
 COPY package.json ./
 COPY server.mjs ./
 COPY static ./static
-COPY LICENSE ./
+COPY LICENSE ./NOTICE ./LICENSES ./LICENSES
+COPY docs ./docs
 
 RUN mkdir -p /data && chown -R node:node /data
 USER node

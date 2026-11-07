@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { chmodSync, createReadStream, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -101,6 +102,16 @@ async function* linesOf(path) {
   }
   if (buf) yield buf;
 }
+// echarts.min.js 的预压缩缓存（按 mtime 失效）：br ~172KB / gzip ~190KB，避免每次导航白拉 612KB
+let echartsEnc = null;
+function echartsEncoded(full) {
+  const mtime = statSync(full).mtimeMs;
+  if (!echartsEnc || echartsEnc.mtime !== mtime) {
+    const raw = readFileSync(full);
+    echartsEnc = { mtime, br: brotliCompressSync(raw), gz: gzipSync(raw, { level: 8 }) };
+  }
+  return echartsEnc;
+}
 let detailCache = null;
 async function readDetail(days) {
   const cacheKey = days + ':' + Math.floor(Date.now() / 60000);
@@ -188,7 +199,11 @@ async function readHourly24() {
     const b = h[side];
     b.calls++; b.input += r.in || 0; b.output += r.out || 0; b.cache_read += r.cache_read || 0;
   }
-  } catch { return { hours: [] }; }
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { hours: [] }; // 全新安装：空态
+    console.error('[magpie-usage] usage.jsonl read failed (hourly):', (e && e.message) || e);
+    return { hours: [], error: '日志读取失败(' + ((e && e.code) || (e && e.message) || '?') + ')' };
+  }
   const data = { hours: [...hours.entries()].sort().map(([hour, v]) => ({ hour, ...v })) };
   h24Cache = { key, data };
   return data;
@@ -516,7 +531,9 @@ async function handleRequest(req, res, url) {
         const out = { ...r.json };
         // magpie 0.1.2981+ 的 /v1/magpie/limit：报告本 caller key 当前被什么 holds（limited/key）
         if (lim && lim.code === 200 && lim.json && typeof lim.json === 'object') out.limit = lim.json;
-        return json(res, r.code, out);
+        // code 0 = 网关无响应（upstream 内部已重试）：writeHead(0) 会 RangeError 并吞掉真实原因
+        const status = r.code >= 400 && r.code <= 599 ? r.code : r.code === 200 ? 200 : 502;
+        return json(res, status, out);
       }
       if (p === '/api/overview') {
         const period = ['7d', '30d', 'all'].includes(url.searchParams.get('period')) ? url.searchParams.get('period') : '30d';
@@ -637,8 +654,15 @@ async function handleRequest(req, res, url) {
   }
 
   const heads = { 'Content-Type': MIME[path.extname(full).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' };
-  // echarts.min.js 的 URL 带 ?v= 构建戳，内容变更即换 URL → 可长缓存（1MB→每次导航重拉是最大可用性痛点）
-  if (file === '/static/echarts.min.js') heads['Cache-Control'] = 'public, max-age=31536000, immutable';
+  // echarts.min.js：URL 带 ?v= 构建戳（内容变更即换 URL）→ 长缓存；按 Accept-Encoding 供
+  // 启动时预压缩的 br/gzip 版本（612KB → br ~172KB），避免每次导航白拉全量
+  if (file === '/echarts.min.js') {
+    heads['Cache-Control'] = 'public, max-age=31536000, immutable';
+    const enc = echartsEncoded(full);
+    const ae = String(req.headers['accept-encoding'] || '');
+    if (/\bbr\b/.test(ae)) { heads['Content-Encoding'] = 'br'; heads['Content-Length'] = String(enc.br.length); heads['Vary'] = 'Accept-Encoding'; res.writeHead(200, heads); return res.end(enc.br); }
+    if (/\bgzip\b/.test(ae)) { heads['Content-Encoding'] = 'gzip'; heads['Content-Length'] = String(enc.gz.length); heads['Vary'] = 'Accept-Encoding'; res.writeHead(200, heads); return res.end(enc.gz); }
+  }
   if (file.endsWith('.svg')) heads['Content-Security-Policy'] = 'sandbox'; // SVG 可内嵌脚本：被直接打开时整页隔离
   res.writeHead(200, heads);
   res.end(await readFile(full));
@@ -730,7 +754,7 @@ function scanLogos() {
             try {
               const raw = declared.slice(declared.indexOf(',') + 1);
               const buf = m[2] ? Buffer.from(raw, 'base64') : Buffer.from(decodeURIComponent(raw), 'utf8');
-              if (buf.length) { writeLogo(sub, ext, buf); out[sub] = 'logos/' + sub + '.' + ext; }
+              if (buf.length && buf.length <= 2 * 1024 * 1024) { writeLogo(sub, ext, buf); out[sub] = 'logos/' + sub + '.' + ext; } // 解码后 2MB 上限
             } catch {}
             continue;
           }
@@ -785,6 +809,7 @@ function writeLogo(sub, ext, buf) {
 }
 function fetchOne(sub, url, out) {
   if (!/^https:\/\//.test(url)) return; // 品牌图标只从 https 下载
+  if (out[sub]) return; // 本轮已有（扫描阶段命中或已下载）——不重复下载
   fetch(url, { signal: AbortSignal.timeout(10000) })
     .then(r => (r.ok ? r.arrayBuffer() : null))
     .then(ab => { if (ab && ab.byteLength > 200 && ab.byteLength <= 2 * 1024 * 1024) { const ext = (/\.ico($|\?)/.test(url) ? 'ico' : /\.svg/.test(url) ? 'svg' : 'png'); writeLogo(sub, ext, Buffer.from(ab)); out[sub] = 'logos/' + sub + '.' + ext; try { writeFileSync(path.join(LOGOS_DIR, 'manifest.json'), JSON.stringify(out)); } catch {} } })

@@ -164,11 +164,11 @@ th.num,td.num{text-align:right}
   say(); setTimeout(say, 3000); setTimeout(say, 8000);
 })();
 </script>
-<script src="static/echarts.min.js?v=20261104"></script>
+<script src="static/echarts.min.js?v=20261107"></script>
 <script>
 // CF 链路抖动时这 1MB 可能拉挂（服务端 no-store 不缓存）：阻塞式重试两次，第二次换旧路径
-if(typeof echarts==='undefined')document.write('<scr'+'ipt src="static/echarts.min.js?v=20261104"><\/scr'+'ipt>');
-if(typeof echarts==='undefined')document.write('<scr'+'ipt src="echarts.min.js?v=20261104"><\/scr'+'ipt>');
+if(typeof echarts==='undefined')document.write('<scr'+'ipt src="static/echarts.min.js?v=20261107"><\/scr'+'ipt>');
+if(typeof echarts==='undefined')document.write('<scr'+'ipt src="echarts.min.js?v=20261107"><\/scr'+'ipt>');
 </script>
 <script>
 const $=s=>document.querySelector(s);
@@ -728,11 +728,11 @@ function provColor(name){
   return provColor.m.get(name);
 }
 
-let hourlyLocal=[], hourlyRemote=[];
+let hourlyLocal=[], hourlyRemote=[], hourlyErr='';
 
 function renderHourly(){
-  fetch(auth('api/hourly'),{headers:hf()}).then(r=>{if(!r.ok)throw new Error('hourly '+r.status);return r.json()}).then(d=>{ hourlyLocal=(d&&d.hours)||[]; drawHourly(); })
-    .catch(()=>{ hourlyLocal=[]; drawHourly(); });
+  fetch(auth('api/hourly'),{headers:hf()}).then(r=>{if(!r.ok)throw new Error('hourly '+r.status);return r.json()}).then(d=>{ hourlyErr=''; hourlyLocal=(d&&d.hours)||[]; drawHourly(); })
+    .catch(e=>{ hourlyLocal=[]; hourlyErr=e&&e.message?String(e.message):String(e); drawHourly(); });
 }
 
 function drawHourly(){
@@ -742,7 +742,7 @@ function drawHourly(){
   const rowsD=hourlyLocal.map(x=>({hour:x.hour,rows:[x.d||{}]}));
   const rowsR=rem.map(x=>({hour:x.hour,rows:[x.r||{}]}));
   const daysX=[...new Set([...rowsD.map(x=>x.hour),...rowsR.map(x=>x.hour)])].sort();
-  if(!daysX.length){const c=initChart('cCache24');c.clear();cover('cCache24','<span>暂无数据</span>');return;}
+  if(!daysX.length){const c=initChart('cCache24');c.clear();cover('cCache24',hourlyErr?'<span style="color:var(--bad)">日志读取失败：'+esc(hourlyErr)+'</span>':'<span>暂无数据</span>');return;}
   cover('cCache24',null);
   const rate=rows=>{const i2=rows.reduce((s2,x)=>s2+(x.input||0),0),c2=rows.reduce((s2,x)=>s2+(x.cache_read||0),0);
     return (i2+c2)?+(100*c2/(i2+c2)).toFixed(1):0;};
@@ -787,6 +787,7 @@ function renderDaily(detail){
   lastDetail=detail||{};
   const c=initChart('cDaily');
   const days=(detail.daily||[]);
+  if(detail.error){c.clear();cover('cDaily','<span style="color:var(--bad)">'+esc(detail.error)+'</span>');return;}
   if(!days.length){c.clear();cover('cDaily','<span>暂无数据</span>');return;}
   cover('cDaily',null);
   const dayKey=d=>String(d).slice(5);
@@ -1065,12 +1066,13 @@ setInterval(function(){
   if(bt.dataset.err!==t){bt.dataset.err=t;bt.title=e.join(String.fromCharCode(10));bt.innerHTML=t?t.replace(/&/g,'&amp;').replace(/</g,'&lt;'):'';bt.style.display=t?'':'none';bt.style.color=t?'#f85149':'';}
 },1500);
 
-// 上游采集异常必须可见（静默显 0 会误导，data-semantics 红线）：首屏用 __NOTE__，刷新用响应里的 note
+// 上游采集异常必须可见（静默显 0 会误导，data-semantics 红线）：首屏用 __NOTE__，刷新用响应里的 note。
+// 幂等：无 note 移除横幅（恢复后降级提示不残留），note 变化时原位更新
 function showNote(t){
-  if(!t || document.getElementById('noteBanner'))return;
-  const n=document.createElement('div');n.id='noteBanner';n.className='err';
+  let n=document.getElementById('noteBanner');
+  if(!t){ if(n)n.remove(); return; }
+  if(!n){ n=document.createElement('div'); n.id='noteBanner'; n.className='err'; document.querySelector('.sub').after(n); }
   n.textContent='⚠ '+t+' —— 以下数值可能不完整';
-  document.querySelector('.sub').after(n);
 }
 function paint(d){
   showNote(window.__NOTE__);
