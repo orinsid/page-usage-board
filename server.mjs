@@ -721,7 +721,16 @@ function scanLogos() {
         if (declared.startsWith('data:')) {
           const m = declared.match(/^data:([^;,]+)(;base64)?,/);
           const ext = m && (ICON_MIME[m[1]] || (m[1].includes('svg') ? 'svg' : null));
-          if (ext) { writeLogo(sub, ext, m[2] ? Buffer.from(declared.split('base64,')[1], 'base64') : Buffer.from(decodeURIComponent(declared.split(',', 1)[1] || ''))); out[sub] = 'logos/' + sub + '.' + ext; continue; }
+          if (ext) {
+            // data URI 载荷 = 第一个逗号之后的全部内容（split(,,1) 的 [1] 是 undefined，
+            // URL 编码型图标曾被写成 0 字节文件 → manifest 引用空文件 → 加载失败）
+            try {
+              const raw = declared.slice(declared.indexOf(',') + 1);
+              const buf = m[2] ? Buffer.from(raw, 'base64') : Buffer.from(decodeURIComponent(raw), 'utf8');
+              if (buf.length) { writeLogo(sub, ext, buf); out[sub] = 'logos/' + sub + '.' + ext; }
+            } catch {}
+            continue;
+          }
         } else if (/^https?:\/\//.test(declared)) { fetchOne(sub, declared, out); continue; }
       }
       // ② assets/ 下的图片
@@ -747,6 +756,8 @@ function scanLogos() {
       if (dot <= 0) continue;
       const sub = f.slice(0, dot), ext = f.slice(dot + 1);
       if (out[sub]) continue;
+      // 0 字节文件（历史解析 bug 产物）不预置——让提取阶段重新生成
+      try { if (!statSync(path.join(LOGOS_DIR, f)).size) continue; } catch { continue; }
       if (['png', 'svg', 'ico', 'jpg', 'webp'].includes(ext)) out[sub] = 'logos/' + f;
     }
   } catch {}
