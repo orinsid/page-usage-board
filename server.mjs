@@ -275,7 +275,9 @@ async function aggregateAttribution(rows, { period, days, callers, source }) {
     accounts: [...acct.values()].sort((x, y) => y.calls - x.calls).slice(0, 30),
     callerBreakdown: [...byCaller.values()].sort((x, y) => y.calls - x.calls),
     days: [...byDay.entries()].sort().map(([day, m]) => ({ day, providers: Object.fromEntries(m) })),
-    hourly: [...hourly.entries()].sort().map(([hour, v]) => ({ hour, ...v })),
+    // 远端归因的小时行按 {hour, r:{...}} 输出——页面 drawHourly 按 x.r 读取远端侧
+    // （扁平结构会被当成空对象，全远端出口的部署 24h 图会全 0）
+    hourly: [...hourly.entries()].sort().map(([hour, v]) => ({ hour, r: v })),
   };
 }
 

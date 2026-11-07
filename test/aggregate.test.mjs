@@ -27,8 +27,8 @@ test('filters attribution by caller but keeps the caller breakdown', async () =>
   assert.equal(d.callerBreakdown.find((c) => c.name === 'hermes').calls, 1);
   // 10 days old is outside a 7-day window
   assert.equal(d.providers.some((p) => p.provider === 'old-provider'), false);
-  // hourly is caller-filtered too (2 calls: cloud + Magpie, not hermes)
-  assert.equal(d.hourly.reduce((s, h) => s + h.calls, 0), 2);
+  // hourly is caller-filtered too (2 calls: cloud + Magpie, not hermes); rows are {hour, r:{...}}
+  assert.equal(d.hourly.reduce((s, h) => s + h.r.calls, 0), 2);
   assert.ok(d.days.length >= 1);
 });
 
