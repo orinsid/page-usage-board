@@ -524,7 +524,7 @@ function quotaCard(q){
   const badge=days!=null?`<i class="q2days" style="background:${expColor(days/864e5)}">${days<864e5?'今天':days<2*864e5?'明天':Math.ceil(days/864e5)+'天'}</i>`:'';
   const iconFile=brandIcon(q);
   const logo=iconFile
-    ?`<div class="q2logo" style="--h:${hue}">${esc(initial)}<img src="${iconFile.replace(/^\//,'')}" onerror="this.remove()">${badge}</div>`
+    ?`<div class="q2logo" style="--h:${hue}">${esc(initial)}<img src="${esc(iconFile.replace(/^\//,''))}" onerror="this.remove()">${badge}</div>`
     :`<div class="q2logo" style="--h:${hue}">${esc(initial)}${badge}</div>`;
   const err=q.error?`<div class="q2err">${esc(q.error)}</div>`:'';
   const rows=[];
@@ -1116,6 +1116,7 @@ async function load(){
   }
   try{
     const q=await (await fetch(auth('api/quotas'),{headers:hf()})).json();
+    if(q.error){ $('#quotaGrid').innerHTML='<div class="err">额度接口异常：'+esc(String(q.error).slice(0,80))+' —— 并非额度清零</div>'; return; }
     renderQuotas(q.data||[], q.limit);
   }catch(e){
     $('#quotaGrid').innerHTML='<div class="err">额度加载失败：'+esc(e.message||e)+'</div>';

@@ -138,14 +138,21 @@ test('API needs the token', async () => {
 });
 
 test('API accepts the token from the query string', async () => {
-  // Gateway is intentionally unreachable in this test: passing auth yields 502, not 401.
+  // Gateway is intentionally unreachable: passing auth yields 200 with local data + a
+  // visible note (the gateway failure must not take the local aggregation down with it).
+  // A rejected token would be 401 instead.
   const r = await request(port, `/api/overview?key=${TEST_KEY}`);
-  assert.equal(r.status, 502);
+  assert.equal(r.status, 200);
+  const d = JSON.parse(r.body);
+  assert.equal(d.usage, null);
+  assert.match(d.note, /用量接口/);
 });
 
 test('API accepts the token from the cookie', async () => {
   const r = await request(port, '/api/overview', { headers: { Cookie: `dk=${TEST_KEY}` } });
-  assert.equal(r.status, 502);
+  assert.equal(r.status, 200);
+  const d = JSON.parse(r.body);
+  assert.equal(d.detail.error, undefined); // ENOENT（空日志）= 空态，不是读取失败
 });
 
 test('the loopback page serves without a URL token and injects one', async () => {

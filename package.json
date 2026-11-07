@@ -10,7 +10,8 @@
     "page",
     "static",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "scripts"
   ],
   "scripts": {
     "start": "node server.mjs",
@@ -18,7 +19,7 @@
     "prepack": "node scripts/prepack.mjs"
   },
   "engines": {
-    "node": ">=18",
+    "node": ">=20",
     "magpie": ">=0.1.1340"
   },
   "keywords": [

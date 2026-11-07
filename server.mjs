@@ -129,7 +129,12 @@ async function readDetail(days) {
       if (recent.length > 80) { recent.sort((x, y) => (x.t < y.t ? 1 : -1)); recent.length = 40; }
     }
   }
-  } catch { return { daily: [], heat, recent: [] }; }
+  } catch (e) {
+    // 读不到（ENOENT）= 全新安装的空态；其他读失败（权限/损坏）必须可见，不能伪装成零用量
+    if (e && e.code === 'ENOENT') return { daily: [], heat, recent: [] };
+    console.error('[magpie-usage] usage.jsonl read failed:', (e && e.message) || e);
+    return { daily: [], heat, recent: [], error: '日志读取失败(' + ((e && e.code) || (e && e.message) || '?') + ')' };
+  }
   recent.sort((x, y) => (x.t < y.t ? 1 : -1));
   recent = recent.slice(0, 40);
   const data = {
@@ -318,8 +323,6 @@ function remoteSources() {
   return out;
 }
 
-function remoteSource() { return remoteSources()[0] || null; }
-
 let lastGoodRemote = null;
 function orderedSources() {
   const list = remoteSources();
@@ -401,7 +404,11 @@ function authed(req, url) {
   const cookie = req.headers.cookie || '';
   for (const c of cookie.split(/;\s*/)) {
     const eq = c.indexOf('=');
-    if (eq > 0 && c.slice(0, eq) === 'dk' && sameKey(c.slice(eq + 1))) return true;
+    if (eq > 0 && c.slice(0, eq) === 'dk') {
+      let v = c.slice(eq + 1);
+      try { v = decodeURIComponent(v); } catch {}
+      if (sameKey(v)) return true;
+    }
   }
   return sameKey(url.searchParams.get('key') || '');
 }
@@ -501,14 +508,16 @@ async function handleRequest(req, res, url) {
       if (p === '/api/overview') {
         const period = ['7d', '30d', 'all'].includes(url.searchParams.get('period')) ? url.searchParams.get('period') : '30d';
         const days = period === '7d' ? 7 : period === '30d' ? 30 : 0;
-        const [u, detail, lim] = await Promise.all([
-          upstream('/v1/magpie/usage?period=' + period),
-          readDetail(days),
+        // 网关挂起/失败不拖垮本地数据：usage/limit 失败 → null + note，本地日志聚合照常返回
+        const [u, lim] = await Promise.all([
+          upstream('/v1/magpie/usage?period=' + period).catch(() => ({ code: 0, json: null })),
           upstream('/v1/magpie/limit?format=json').catch(() => null),
         ]);
-        return json(res, u.code === 200 ? 200 : u.code, { period, usage: u.json, detail,
+        const detail = await readDetail(days);
+        const notes = [u.code === 200 ? undefined : '用量接口 ' + (u.code || '无响应'), detail && detail.error].filter(Boolean);
+        return json(res, 200, { period, usage: u.code === 200 ? u.json : null, detail,
           limit: (lim && lim.code === 200 && lim.json) || undefined,
-          note: u.code === 200 ? undefined : '用量接口 ' + u.code });
+          note: notes.length ? notes.join('；') : undefined });
       }
       // /api/icon/ 已退役（2026-11-04）：前端 logo 全走 QLOGOS manifest，仅 README 提及历史
       if (p === '/api/hourly') {
@@ -542,7 +551,8 @@ async function handleRequest(req, res, url) {
 
   // 页面访问口令：通过 ?key= 时种 cookie（key 含 cookie 非法字符时跳过——头/URL 鉴权仍可用，避免 setHeader 抛错）
   if (PAGE_KEY && /^[!-~]+$/.test(PAGE_KEY) && sameKey(url.searchParams.get('key') || '')) {
-    res.setHeader('Set-Cookie', `dk=${PAGE_KEY}; Path=/; HttpOnly; Max-Age=31536000; SameSite=Lax`);
+    // 值编码（自定义 key 可能含特殊字符）；声明了公共名（ALLOWED_HOSTS）≈ 有 https 反代 → 加 Secure
+    res.setHeader('Set-Cookie', `dk=${encodeURIComponent(PAGE_KEY)}; Path=/; HttpOnly; Max-Age=31536000; SameSite=Lax${ALLOWED_HOSTS.length ? '; Secure' : ''}`);
   }
 
   let file = p === '/' ? '/index.html' : p;
@@ -604,7 +614,9 @@ async function handleRequest(req, res, url) {
     return res.end(html);
   }
 
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(full).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+  const heads = { 'Content-Type': MIME[path.extname(full).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' };
+  if (file.endsWith('.svg')) heads['Content-Security-Policy'] = 'sandbox'; // SVG 可内嵌脚本：被直接打开时整页隔离
+  res.writeHead(200, heads);
   res.end(await readFile(full));
 }
 
@@ -691,7 +703,7 @@ function scanLogos() {
       // ② assets/ 下的图片
       const assets = path.join(dir, 'assets');
       if (existsSync(assets)) {
-        const img = walkFiles(assets, null, 2).find(f => ICON_MIME[(null, '')] || /\.(png|svg|webp|ico|jpg)$/i.test(f));
+        const img = walkFiles(assets, null, 2).find(f => /\.(png|svg|webp|ico|jpg)$/i.test(f));
         if (img) { const ext = img.match(/\.(png|svg|webp|ico|jpg)$/i)[1].toLowerCase(); writeLogo(sub, ext, readFileSync(img)); out[sub] = '/logos/' + sub + '.' + ext; continue; }
       }
       // ③ 源码内联 data URI（跳过 node_modules 嵌套与 .test.）
@@ -795,14 +807,21 @@ function main(resolve, reject) {
         return;
       }
       if (p === PORT_BASE && startPort === null) {
-        probe(`${URL_HOST}:${PORT_BASE}`).then((kind) => {
+        probe(`${URL_HOST}:${PORT_BASE}`).then(async (kind) => {
           if (kind >= 0) { // 同款（v2/v1 旧版）→ 静默复用，这是与 systemd/手动 node 并存的既定语义
+            // 濒死实例也能应答单次探测：1.5s 后二次确认仍活着才复用；死了就继续等端口释放
+            const confirm = await new Promise((r2) => setTimeout(() => probe(`${URL_HOST}:${PORT_BASE}`).then(r2, () => r2(-1)), 1500));
+            if (confirm < 0 && baseWait < 60000) {
+              baseWait += 1500;
+              setTimeout(() => tryBind(PORT_BASE), 1000);
+              return;
+            }
             console.log(`[magpie-usage] port ${PORT_BASE} in use by another usage server${kind === 0 ? ' (v1, no key)' : ''} — reusing it`);
             console.log(`[magpie-usage] open ${openUrl(PORT_BASE, kind === 1)}`);
             if (envKey === undefined) persistKey(); // 这轮定稿的 key 落盘，给复用实例的下次启动用
             resolve(PORT_BASE);
           } else tryBind(p + 1); // 异种占用 → 向上找空闲口
-        });
+        }).catch(() => tryBind(p + 1)); // 探测本身异常 → 视为异种占用继续扫描
       } else if (startPort === null && p < PORT_BASE + PORT_SPAN) {
         tryBind(p + 1); // 自动模式继续向上扫
       } else if (startPort === null) {
@@ -849,7 +868,7 @@ function startServer() {
   return bootPromise;
 }
 
-export { startServer, aggregateAttribution, remoteSource };
+export { startServer, aggregateAttribution };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   startServer().catch((e) => { console.error(`[magpie-usage] not started: ${e.message}`); process.exit(1); });
