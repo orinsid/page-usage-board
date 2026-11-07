@@ -993,7 +993,6 @@ function renderFlow(){
   c.setOption({
     tooltip:{...TIP,trigger:'item',formatter:pp=>esc(pp.name)+': '+pp.value+' 次 ('+pp.percent+'%)'},
     legend:{bottom:0,left:'center',textStyle:{color:cssVar('--dim'),fontSize:11},type:'scroll'},
-    graphic:[],
     series:[{type:'pie',radius:['40%','66%'],center:['50%','42%'],
       data:data.map((d,i)=>d.itemStyle?d:({...d,itemStyle:{color:PALETTE[i%PALETTE.length]}})),
       label:{show:true,position:'outside',color:cssVar('--txt'),fontWeight:600,

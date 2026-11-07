@@ -22,10 +22,8 @@ MODE="${1:-all}"
 STAMP="$(date +%Y%m%d-%H%M)-$(md5sum "$SRC/index.html" | awk '{print substr($1,1,8)}')"
 
 stamp() { # stamp <输出路径> —— 写入带版本戳的 index.html；注入 <head> 后，保证先于主脚本执行
-  # 品牌图标映射（logos/manifest.json，由 tools/sync-plugin-logos.mjs 生成）一并注入
-  local qlogos="{}"
-  [ -f "$SRC/logos/manifest.json" ] && qlogos=$(cat "$SRC/logos/manifest.json")
-  sed "s#<head>#<head><script>window.__BUILD__=\"$STAMP\";window.QLOGOS=$qlogos;</script>#" "$SRC/index.html" > "$1"
+  # QLOGOS 不再由部署注入：服务端启动时扫描用户已装插件并在返回页面时注入（见 server.mjs）
+  sed "s#<head>#<head><script>window.__BUILD__=\"$STAMP\";</script>#" "$SRC/index.html" > "$1"
 }
 
 page_with_port() { # 带路页只写固定端口；口令由服务端 302 补，不落进文件
@@ -38,7 +36,7 @@ sync_local() {
   if stamp "$t/static/index.html.new"; then
     mv "$t/static/index.html.new" "$t/static/index.html"
     cp "$SRC/echarts.min.js" "$t/static/echarts.min.js"
-    [ -d "$SRC/logos" ] && rm -rf "$t/static/logos" && cp -r "$SRC/logos" "$t/static/logos"
+    rm -rf "$t/static/logos" # logo 已改为运行时扫描（DATA_DIR），不再随部署携带
     rm -f "$t/static/remote.js"
     page_with_port "$t/page/index.html.new" && mv "$t/page/index.html.new" "$t/page/index.html"
     sed -E "s#127\.0\.0\.1:[0-9]+#127.0.0.1:${PORT}#g" "$DIR/page/boot.js" > "$t/page/boot.js"
@@ -62,12 +60,6 @@ sync_vps() {
   if [ -z "$VPS_HOST" ]; then echo "vps skipped: VPS_HOST is not set"; return 0; fi
   local tmp="/tmp/usage-index-$STAMP.html"
   stamp "$tmp" || return 1
-  # 品牌图标目录（内容变更不频繁，整包推）
-  if [ -d "$SRC/logos" ]; then
-    tar -C "$SRC" -czf /tmp/qlogos.tgz logos 2>/dev/null &&
-    timeout 90 scp -q -o ConnectTimeout=10 /tmp/qlogos.tgz "$VPS_HOST:$VPS_DIR/static/qlogos.tgz" 2>/dev/null &&
-    timeout 30 ssh -o ConnectTimeout=10 "$VPS_HOST" "cd $VPS_DIR/static && tar xzf qlogos.tgz && rm qlogos.tgz" 2>/dev/null && echo "vps logos ok"
-  fi
   for i in 1 2 3; do
     if timeout 90 scp -q -o ConnectTimeout=10 "$tmp" "$VPS_HOST:$VPS_DIR/static/index.html"; then
       RM=$(timeout 30 ssh -o ConnectTimeout=10 "$VPS_HOST" "md5sum $VPS_DIR/static/index.html" 2>/dev/null | awk '{print $1}')

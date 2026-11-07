@@ -557,7 +557,9 @@ async function handleRequest(req, res, url) {
 
   let file = p === '/' ? '/index.html' : p;
   if (file.startsWith('/static/')) file = file.slice('/static'.length);
-  const full = path.resolve(STATIC_DIR, '.' + file);
+  // /logos/* 由 DATA_DIR 提供（运行时扫描产物）；其余静态资源来自包内 static/
+  const base = file.startsWith('/logos/') ? LOGOS_DIR : STATIC_DIR;
+  const full = path.resolve(base, '.' + file);
   const rel = path.relative(STATIC_DIR, full);
   let isFile = false;
   try { isFile = !rel.startsWith('..') && !path.isAbsolute(rel) && statSync(full).isFile(); } catch {}
@@ -596,7 +598,10 @@ async function handleRequest(req, res, url) {
       if (u.code !== 200) note = '用量接口 ' + u.code;
     } catch (e) { note = String(e && e.message || e); }
     const trap = '<script>window.__errs=[];window.addEventListener("error",function(e){var m=e.message||((e.target&&e.target.src||e.target&&e.target.href)?("resource: "+(e.target.src||e.target.href)):"");if(!m)return;if(e.target&&(e.target.dataset&&e.target.dataset.missing||/remote\.js|cloudflareinsights\.com/.test(e.target.src||e.target.href||"")))return;window.__errs.push(m+" @ "+(e.filename||"")+":"+(e.lineno||0)+":"+(e.colno||0))},true);window.addEventListener("unhandledrejection",function(e){window.__errs.push("PROMISE: "+String(e.reason&&e.reason.message||e.reason))});<\/script>';
-    const inject = `<script>window.__DATA__=${JSON.stringify(data).replace(/</g, '\\u003c')};window.__NOTE__=${JSON.stringify(note)};</script>`;
+    // 品牌 logo 映射：运行时扫描产出（DATA_DIR/logos/manifest.json），不再由部署期注入
+    let qlogos = {};
+    try { qlogos = JSON.parse(readFileSync(path.join(LOGOS_DIR, 'manifest.json'), 'utf8')); } catch {}
+    const inject = `<script>window.__DATA__=${JSON.stringify(data).replace(/</g, '\\u003c')};window.__NOTE__=${JSON.stringify(note)};window.QLOGOS=${JSON.stringify(qlogos).replace(/</g, '\\u003c')};</script>`;
     // 页面需要的口令只出现在这份 HTML 里；API 路由仍校验它，URL/书签里不出现
     const keyInject = PAGE_KEY ? `<script>window.__KEY__=${JSON.stringify(PAGE_KEY).replace(/</g, '\\u003c')};</script>` : '';
     html = html.replace('<head>', () => '<head>' + keyInject + trap + inject);
@@ -682,6 +687,9 @@ function scanLogos() {
   const roots = [];
   const nm = path.join(os.homedir(), '.config', 'magpie', 'plugins', 'node_modules');
   if (existsSync(nm)) roots.push(nm);
+  // 本插件的同级目录（~/.config/magpie/my-* 或容器 /config/my-*）：宿主把插件都装在这层
+  const siblings = path.dirname(ROOT);
+  if (existsSync(siblings) && !roots.includes(siblings)) roots.push(siblings);
   for (const d of EXTRA_DIRS) if (existsSync(d)) roots.push(d);
   const dataUri = /data:(image\/[a-z+]+(?:\+xml)?);base64,([A-Za-z0-9+/=]{100,})/g;
   for (const root of roots) {
@@ -716,8 +724,16 @@ function scanLogos() {
       }
     }
   }
-  // 兜底：包内 static/logos 的人工精选集（deploy 推的）按文件名并入；扫描已产出的品牌不覆盖
-  const bundled = path.join(STATIC_DIR, 'logos');
+  // 兜底：DATA_DIR/logos 里已有的历史产出按文件名预置（避免每次启动重新下载 favicon）；扫描到的新品牌不覆盖
+  try {
+    for (const f of readdirSync(LOGOS_DIR)) {
+      const dot = f.lastIndexOf('.');
+      if (dot <= 0) continue;
+      const sub = f.slice(0, dot), ext = f.slice(dot + 1);
+      if (out[sub]) continue;
+      if (['png', 'svg', 'ico', 'jpg', 'webp'].includes(ext)) out[sub] = '/logos/' + f;
+    }
+  } catch {}
   if (existsSync(bundled)) {
     for (const f of readdirSync(bundled)) {
       const m = f.match(/^([a-z0-9-]+)\.(png|svg|webp|ico|jpg)$/i);
@@ -756,7 +772,8 @@ function fetchOne(sub, url, out) {
 function ensureLogos() {
   if (process.env.LOGOS === '0') return; // 测试/无图标场景：不扫 node_modules
   try {
-    if (process.env.LOGOS_FORCE === '1' || !existsSync(path.join(LOGOS_DIR, 'manifest.json'))) scanLogos();
+    // 每次启动都重扫：用户会新装/卸载插件，logo 集应跟随变化（fetchOne 有缓存跳过，不会反复下载）
+    scanLogos();
   } catch (e) { console.log('[magpie-usage] logos scan failed:', e.message || e); }
 }
 function main(resolve, reject) {
