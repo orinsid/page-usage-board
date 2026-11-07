@@ -68,13 +68,21 @@ const json = (res, code, obj) => {
 };
 
 async function upstream(p) {
-  const r = await fetch(GATEWAY + p, {
-    headers: KEY ? { Authorization: `Bearer ${KEY}` } : {},
-    signal: AbortSignal.timeout(12000),
-  });
-  const body = await r.text();
-  try { return { code: r.status, json: JSON.parse(body) }; }
-  catch { return { code: r.status, json: { error: body.slice(0, 200) } }; }
+  // 瞬时网关挂起重试一次（上限 12s×2）：失败已可见化（note/红条），这里只为削掉偶发抖动
+  let last;
+  for (let i = 0; i < 2; i++) {
+    try {
+      const r = await fetch(GATEWAY + p, {
+        headers: KEY ? { Authorization: `Bearer ${KEY}` } : {},
+        signal: AbortSignal.timeout(12000),
+      });
+      const body = await r.text();
+      try { return { code: r.status, json: JSON.parse(body) }; }
+      catch { return { code: r.status, json: { error: body.slice(0, 200) } }; }
+    } catch (e) { last = e; }
+    await new Promise((r2) => setTimeout(r2, 500 * (i + 1)));
+  }
+  return { code: 0, json: { error: String(last && last.message || last).slice(0, 200) } };
 }
 
 // usage.jsonl 聚合：按天×provider、7×24 热力、最近请求（60s 缓存）。
@@ -561,7 +569,9 @@ async function handleRequest(req, res, url) {
   let file = p === '/' ? '/index.html' : p;
   if (file.startsWith('/static/')) file = file.slice('/static'.length);
   // /logos/* 由 DATA_DIR 提供（运行时扫描产物）；其余静态资源来自包内 static/
-  const base = file.startsWith('/logos/') ? LOGOS_DIR : STATIC_DIR;
+  // （前缀必须剥掉：resolve(base, './logos/x.png') 会多套一层 logos/ → 404）
+  let base = STATIC_DIR;
+  if (file.startsWith('/logos/')) { base = LOGOS_DIR; file = file.slice('/logos'.length); }
   const full = path.resolve(base, '.' + file);
   const rel = path.relative(STATIC_DIR, full);
   let isFile = false;
