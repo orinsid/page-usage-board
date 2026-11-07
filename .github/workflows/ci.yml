@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax check
+        run: |
+          node --check server.mjs
+          node --check index.mjs
+          node --check scripts/prepack.mjs
+      - name: Tests
+        run: npm test
+      - name: Package guard
+        run: node scripts/prepack.mjs
+      - name: Pack dry run
+        run: npm pack --dry-run

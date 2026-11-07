@@ -1,0 +1,18 @@
+# local deployment
+server.log
+*.log
+*.tgz
+q-sample.json
+*.local.js
+remote.js
+usage-page-key
+
+# generated at deploy time
+*.new
+
+# tooling
+magpie-config/
+node_modules/
+.env
+.DS_Store
+Thumbs.db

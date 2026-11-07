@@ -1,0 +1,14 @@
+.git
+.github
+node_modules
+test
+tools
+scripts
+docs
+page
+index.mjs
+*.tgz
+*.log
+remote.local.js
+remote.js
+usage-page-key
