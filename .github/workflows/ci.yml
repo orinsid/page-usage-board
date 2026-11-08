@@ -28,6 +28,11 @@ jobs:
           node --check scripts/prepack.mjs
       - name: Tests
         run: npm test
+      - name: ECharts bundle reproduces from sources (byte-exact)
+        run: |
+          npm ci
+          node scripts/build-echarts.mjs
+          git diff --exit-code static/echarts.min.js
       - name: Package guard
         run: node scripts/prepack.mjs
       - name: Pack dry run
