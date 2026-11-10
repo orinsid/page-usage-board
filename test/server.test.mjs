@@ -352,38 +352,39 @@ test('config dir: the host cwd carrying magpie markers wins (portable installs)'
   // 路径比较必须用 realpathSync：macOS 的 os.tmpdir() 是 /var/folders/…，而 /var 是指向
   // /private/var 的符号链接——子进程的 process.cwd() 与日志里的路径都是解析后的真实
   // 路径，拿未解析的 dataDir 拼字符串比会假红（维护者复审在 macOS 实测）。
+  // 子进程自己 chdir，不靠 spawn 的 cwd 选项：bun test 把所有包放进同一个进程，
+  // 有的包会 process.chdir 到自己的临时目录再还原，我们 spawn 的瞬间正好落在别人的
+  // 目录里时，child_process 的 cwd 选项在 bun 下不生效（社区 CI 实测：服务端读到的是
+  // 另一个包的 /tmp/mail-watch-test-*），测试就会在别人的目录上做断言。
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'usage-board-cwd-'));
   writeFileSync(path.join(dataDir, 'usage.jsonl'), '');
   const realDir = realpathSync(dataDir);
-  const c = spawn(RUNTIME, [path.join(root, 'server.mjs')], {
-    cwd: realDir,
-    env: {
-      ...process.env,
-      PAGE_KEY: TEST_KEY,
-      GATEWAY: 'http://127.0.0.1:9',
-      ATTRIBUTION: 'local',
-      MAGPIE_PROVIDERS: path.join(realDir, 'no-providers.json'),
-      MAGPIE_PROVIDERS_FILE: path.join(realDir, 'no-plugin-providers.json'),
-      HOST: '127.0.0.1',
-      PORT: '0',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let out = '';
-  c.stdout.on('data', (d) => { out += d; });
-  c.stderr.on('data', (d) => { out += d; });
-  await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('server did not start: ' + out)), 10000);
-    c.stdout.on('data', (d) => { if (/listening/.test(d.toString())) { clearTimeout(t); resolve(); } });
-    c.once('exit', (code) => { clearTimeout(t); reject(new Error('exited ' + code + ': ' + out)); });
-  });
+  const code = `
+    process.chdir(${JSON.stringify(realDir)});
+    const m = await import(${JSON.stringify(SERVER_URL)});
+    const port = await m.startServer();
+    console.log('CHDIR-READY ' + port);
+    process.exit(0);
+  `;
+  const r = await spawnChild(code, {
+    ...process.env,
+    PAGE_KEY: TEST_KEY,
+    GATEWAY: 'http://127.0.0.1:9',
+    ATTRIBUTION: 'local',
+    MAGPIE_PROVIDERS: path.join(realDir, 'no-providers.json'),
+    MAGPIE_PROVIDERS_FILE: path.join(realDir, 'no-plugin-providers.json'),
+    HOST: '127.0.0.1',
+    PORT: '0',
+    // USAGE_JSONL 故意不设：服务应通过 cwd 探测找到 dataDir/usage.jsonl
+  }, 20000);
   try {
+    assert.equal(r.code, 0, `child exit ${r.code}: ${r.out.slice(0, 400)}`);
+    assert.match(r.out, /CHDIR-READY/);
     assert.ok(
-      out.includes('jsonl=' + path.join(realDir, 'usage.jsonl') + '(ok)'),
-      'usage.jsonl resolved from cwd: ' + out.slice(0, 300),
+      r.out.includes('jsonl=' + path.join(realDir, 'usage.jsonl') + '(ok)'),
+      'usage.jsonl resolved from cwd: ' + r.out.slice(0, 300),
     );
   } finally {
-    c.kill();
     try { rmSync(dataDir, { recursive: true, force: true }); } catch {}
   }
 });
