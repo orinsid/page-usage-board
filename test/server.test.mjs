@@ -27,18 +27,17 @@ let port;
 let publicChild;
 let publicPort;
 
-// 子进程环境：先剥掉别人留在共享进程里的 magpie 变量，再放我们自己的一套。
-// bun test 把所有包放进同一个进程，有的包会全局设置 process.env.MAGPIE_CONFIG_DIR
-// 指向自己的临时目录且不还原（mail-watch 就是这样）——继承下来会让服务端读到
-// 别人的目录，任何"默认值/cwd 探测"的断言都会静默测错对象。
-const cleanEnv = () => {
+// 所有包共用一个 bun test 进程：别的包的测试会设 MAGPIE_CONFIG_DIR / USAGE_JSONL
+// （mail-watch 设 MAGPIE_CONFIG_DIR），继承下来会盖过本包要测的探测顺序。
+function hostEnv() {
   const env = { ...process.env };
   delete env.MAGPIE_CONFIG_DIR;
+  delete env.USAGE_JSONL;
   return env;
-};
+}
 
 const baseEnv = (dir = os.tmpdir()) => ({
-  ...cleanEnv(),
+  ...hostEnv(),
   PAGE_KEY: TEST_KEY,
   USAGE_JSONL: path.join(dir, 'usage.jsonl'),
   GATEWAY: 'http://127.0.0.1:9',
@@ -362,16 +361,13 @@ test('config dir: the host cwd carrying magpie markers wins (portable installs)'
   // 路径比较必须用 realpathSync：macOS 的 os.tmpdir() 是 /var/folders/…，而 /var 是指向
   // /private/var 的符号链接——子进程的 process.cwd() 与日志里的路径都是解析后的真实
   // 路径，拿未解析的 dataDir 拼字符串比会假红（维护者复审在 macOS 实测）。
-  // MAGPIE_CONFIG_DIR 必须显式不存在（cleanEnv）：它优先级高于 cwd 探测，而 bun test 的
-  // 共享进程里别的包会把它指向自己的临时目录且不还原（mail-watch），继承下来这条断言
-  // 就变成了"读别人的目录"——社区 CI 就是这样红的。
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'usage-board-cwd-'));
   writeFileSync(path.join(dataDir, 'usage.jsonl'), '');
   const realDir = realpathSync(dataDir);
   const c = spawn(RUNTIME, [path.join(root, 'server.mjs')], {
     cwd: realDir,
     env: {
-      ...cleanEnv(),
+      ...hostEnv(),
       PAGE_KEY: TEST_KEY,
       GATEWAY: 'http://127.0.0.1:9',
       ATTRIBUTION: 'local',
@@ -379,7 +375,6 @@ test('config dir: the host cwd carrying magpie markers wins (portable installs)'
       MAGPIE_PROVIDERS_FILE: path.join(realDir, 'no-plugin-providers.json'),
       HOST: '127.0.0.1',
       PORT: '0',
-      // USAGE_JSONL / MAGPIE_CONFIG_DIR 都不设：服务应通过 cwd 探测找到 dataDir/usage.jsonl
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
