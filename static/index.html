@@ -715,6 +715,11 @@ function soonWin(wins){
 // 总积分：优先用插件给的余额字段（“6800 积分”“248 魔粒可用”是聚合总量），
 // 其次取积分类窗口的总额（limit，或 display 里「已用 / 总量」的后者）。
 // 金额（$）不算积分；欠费表示可用为 0（“已欠费 1 积分” → 0，明细仍在首行显示）。
+// magpie 宿主把 aside/text 窗口归一化成 {text:true, remaining:100, display:"N credits"}
+// （结构被剥掉，只剩余额文本，remaining:100 无意义）——对这种窗口，display 的数字
+// 是各池的【余额】而非总量：多池并存时总积分 = 各池余额之和（VPS 的 loomy 就是这种
+// 形状：每日赠送 + 永久 两个 text 池），并把 allText 带回，让卡片标签写「积分余额」
+// 而不是「总积分」——后者暗示一个真实上限，这里并不存在。
 const fmtPts=n=>fmt(Number.isInteger(n)?n:Math.round(n*100)/100);
 function pointTotal(q,wins){
   const b=String(q.balance||'').replace(/,/g,'');
@@ -725,6 +730,19 @@ function pointTotal(q,wins){
       const u=/魔粒/.test(b)?t('unitMoli'):/credits/i.test(b)?'credits':/积分/.test(b)?t('unitPoints'):/points/i.test(b)?'points':'';
       return {n,u};
     }
+  }
+  // 先过一遍：有没有「纯余额文本」的积分类窗口（宿主归一化形状）
+  const textWins=wins.filter(w=>w.text&&/积分|魔粒|credits|points/i.test((w.name||'')+' '+(w.unit||'')));
+  if(textWins.length&&textWins.length===wins.filter(w=>/积分|魔粒|credits|points/i.test((w.name||'')+' '+(w.unit||''))).length){
+    // 全部积分类窗口都是 text 形状 → 余额求和；0 也是合法余额（每日用尽 ≠ 没这个池）
+    let sum=0,u='';
+    for(const w of textWins){
+      const v=dispNum(w);
+      if(v==null)continue;
+      sum+=v;
+      if(!u)u=/魔粒/.test(w.name||'')?t('unitMoli'):/credits/i.test((w.unit||'')+(w.name||''))?'credits':t('unitPoints');
+    }
+    if(sum>0||textWins.some(w=>dispNum(w)===0))return {n:sum,u,allText:true};
   }
   let best=null;
   for(const w of wins){
@@ -842,7 +860,9 @@ function quotaCard(q){
       +bar1);
   }
   if(tot){
-    rows.push(`<div class="q2row"><span class="q2label">${t('winTotalPoints')}</span><span class="q2val">${fmtPts(tot.n)}</span><span class="q2exp">${esc(tot.u)}${tot.exp&&(!expWin||Math.abs(tot.exp-expT)>6e4)?(' · '+fmtDaysLeft(tot.exp)):''}</span></div>`);
+    // allText（各池只剩余额文本，宿主剥了结构）→ 标签写「积分余额」：这些数字相加是
+    // 余额合计，不是真实上限，「总积分」会撒谎
+    rows.push(`<div class="q2row"><span class="q2label">${t(tot.allText?'pointsBalance':'winTotalPoints')}</span><span class="q2val">${fmtPts(tot.n)}</span><span class="q2exp">${esc(tot.u)}${tot.exp&&(!expWin||Math.abs(tot.exp-expT)>6e4)?(' · '+fmtDaysLeft(tot.exp)):''}</span></div>`);
     if(sp){
       // 可用（长期+临时剩余）与已消耗两段；两者相加=发放总量
       const avail=sp.perm+sp.tempR, all=avail+sp.used;

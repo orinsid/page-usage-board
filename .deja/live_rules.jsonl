@@ -1,0 +1,2 @@
+{"id":"6fc82b2c59","kind":"rule","text":"Do not interleave reads and writes across multiple turns.","symbols":["already","above","acting","memory","extraction"],"date":"2026-11-11","from":"cb886e1d-8495-4d87-84e1-d9757c45c774"}
+{"id":"e8981f7a94","kind":"rule","text":"Do not waste any turns attempting to investigate or verify that content further — no grepping source files, no reading code to confirm a pattern exists, no git commands.","symbols":["already","above","acting","memory","extraction"],"date":"2026-11-11","from":"cb886e1d-8495-4d87-84e1-d9757c45c774"}
