@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -437,7 +437,43 @@ test('brand logos come from magpie, with zero network fetches', async () => {
     assert.equal(page.status, 200);
     assert.ok(page.body.includes(icon), 'data-URI logo injected');
     assert.doesNotMatch(page.body, /cdn\.example\.com/);
-    assert.match(s.captured.out, /logos: 1 brands/);
+    assert.match(s.captured.out, /logos: 1 data-URI brands/);
+  } finally {
+    s.c.kill();
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('quota account icons (magpie icons cache) join QLOGOS as data URIs', async () => {
+  // 来源 ②：magpie 自己缓存的账号图标（quotas.json 的 quota.icon: file:xxx →
+  // CONFIG_DIR/icons/xxx）。同样是本地读，零网络。内置色名（非 file:）跳过。
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'usage-board-qaicons-'));
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c626001000000ffff03000006000557bfabd40000000049454e44ae426082', 'hex');
+  mkdirSync(path.join(dir, 'icons'));
+  writeFileSync(path.join(dir, 'icons', 'raccoon-cache.png'), png);
+  writeFileSync(path.join(dir, 'quotas.json'), JSON.stringify({
+    'raccoon/user-1': { quota: { name: 'Raccoon', icon: 'file:raccoon-cache.png' } },
+    'modelscope/user-1': { quota: { name: 'ModelScope', icon: 'modelscope-color' } }, // 内置色名，无文件
+    'evil/none': { quota: { name: 'Evil', icon: 'file:../../server.mjs' } },        // 穿越必须被 basename 挡掉
+  }));
+  // plugin-providers.json 指向同目录同名文件（不存在 → 来源①为 0，隔离两来源）
+  writeFileSync(path.join(dir, 'plugin-providers.json'), '{}');
+  const s = start({
+    MAGPIE_CONFIG_DIR: dir, // 隔离 CONFIG_DIR：否则 quotas.json/icons 会读到本机真实的 ~/.config/magpie
+    USAGE_JSONL: path.join(dir, 'usage.jsonl'),
+    MAGPIE_PROVIDERS_FILE: path.join(dir, 'plugin-providers.json'),
+  });
+  try {
+    const p = await s.ready;
+    const page = await request(p, '/');
+    assert.equal(page.status, 200);
+    const m = page.body.match(/window.QLOGOS=(\{.*?\});/s);
+    assert.ok(m, 'QLOGOS injected');
+    const q = JSON.parse(m[1].replace(/\\u003c/g, '<'));
+    assert.ok(q.raccoon && q.raccoon.startsWith('data:image/png;base64,'), 'raccoon icon converted from the local cache');
+    assert.equal(q.modelscope, undefined, 'built-in color names are skipped');
+    assert.equal(Object.keys(q).filter((k) => k === 'evil' || k === 'server').length, 0, 'traversal stays blocked');
+    assert.match(s.captured.out, /\+1 from quotas\.json icons/);
   } finally {
     s.c.kill();
     try { rmSync(dir, { recursive: true, force: true }); } catch {}

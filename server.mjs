@@ -753,11 +753,14 @@ async function probe(hp) {
 // 在前端保持不变，未命中品牌走首字色块。
 let providerLogos = {};
 function loadProviderLogos() {
+  const out = {};
+  let total = 0;
+  // 来源 ①：plugin-providers.json —— magpie 的 provider 注册表，插件自己上报的
+  // data URI 图标（零下载：https 图标一律不抓，那会让本机服务在启动时向第三方
+  // CDN 发起用户不可见的请求——维护者复审红线）。
   const f = PROVIDERS_FILE || path.join(CONFIG_DIR, 'plugin-providers.json');
   try {
     const j = JSON.parse(readFileSync(f, 'utf8'));
-    const out = {};
-    let total = 0;
     for (const p of Object.values(j)) {
       const id = p && typeof p.id === 'string' ? p.id.toLowerCase() : '';
       const icon = p && typeof p.icon === 'string' ? p.icon : '';
@@ -767,11 +770,38 @@ function loadProviderLogos() {
       if (out[id] === undefined) { out[id] = icon; total += icon.length; }
       if (total > 4 * 1024 * 1024) break; // 注入 HTML 的总体积上限
     }
-    providerLogos = out;
-    console.log(`[magpie-usage] logos: ${Object.keys(out).length} brands from ${f}`);
+    console.log(`[magpie-usage] logos: ${Object.keys(out).length} data-URI brands from ${f}`);
   } catch (e) {
-    console.log(`[magpie-usage] logos: plugin-providers.json not readable (${(e && e.code) || (e && e.message) || e}) — badges only`);
+    console.log(`[magpie-usage] logos: plugin-providers.json not readable (${(e && e.code) || (e && e.message) || e})`);
   }
+  // 来源 ②：quotas.json —— magpie 给每个账号缓存的图标（quota.icon: file:xxx =
+  // CONFIG_DIR/icons/xxx，magpie 自己已下载的；或内置色名 modelscope-color，
+  // 没有实体文件，跳过）。同为本地读，零网络。
+  try {
+    const q = JSON.parse(readFileSync(path.join(CONFIG_DIR, 'quotas.json'), 'utf8'));
+    let added = 0;
+    for (const [key, v] of Object.entries(q)) {
+      if (total > 4 * 1024 * 1024) break;
+      const icon = v && v.quota && typeof v.quota.icon === 'string' ? v.quota.icon : '';
+      if (!icon.startsWith('file:')) continue; // 内置色名（modelscope-color 等）无实体文件
+      const prov = typeof key === 'string' ? key.split('/')[0].toLowerCase() : '';
+      if (!prov || out[prov] !== undefined) continue;
+      // file: 后取 basename 再拼回 icons/：防 icon 值里夹 ../ 之类穿越
+      const base = path.basename(icon.slice(5));
+      if (!/\.(png|svg|webp|jpg|jpeg|ico)$/i.test(base)) continue;
+      try {
+        const buf = readFileSync(path.join(CONFIG_DIR, 'icons', base));
+        if (!buf.length || buf.length > 2 * 1024 * 1024) continue;
+        const ext = path.extname(base).slice(1).toLowerCase();
+        const mime = ext === 'svg' ? 'image/svg+xml' : ext === 'ico' ? 'image/x-icon' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+        out[prov] = `data:${mime};base64,${buf.toString('base64')}`;
+        total += buf.length;
+        added++;
+      } catch {}
+    }
+    if (added) console.log(`[magpie-usage] logos: +${added} from quotas.json icons (local cache)`);
+  } catch {}
+  providerLogos = out;
 }
 
 function main(resolve, reject) {
