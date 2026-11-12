@@ -877,10 +877,15 @@ function quotaCard(q){
       :(expWin.balance!=null?(t('remPre')+fmt(expWin.balance)+t('remSuf'))
       :(expWin.display?esc(expWin.display):'—')))));
     const left=(expT-Date.now())/864e5;
-    // used 百分比窗口（MonkeyCode 等）无 remaining：进度条画已用份额
-    const frac=(expWin.runsOut!=null&&expWin.limit)?expWin.runsOut/expWin.limit
+    // 进度条画「剩余份额」：runsOut/limit、remaining/100，百分比窗口（MonkeyCode 等）
+    // 剩余 = limit×(100-used)/100 → frac = 剩余/limit = (100-used)/100。
+    // 不能用 used/100：那是「已用份额」，画出来会"剩一点"的错觉（used=0 时条只剩 2% 宽）。
+    // 美元额度（$/¥）不画：那是账单不是额度池，100% 蓝条会误导。
+    const usdWin=/usd|美元|\$/i.test(expWin.unit||'');
+    const frac=usdWin?null
+      :(expWin.runsOut!=null&&expWin.limit)?expWin.runsOut/expWin.limit
       :(expWin.remaining!=null?expWin.remaining/100
-      :(expWin.used!=null&&expWin.limit?expWin.used/100:null));
+      :(expWin.used!=null&&expWin.limit?(100-expWin.used)/100:null));
     // 窗口本身就叫「总积分」时，第一行讲剩余、第二行讲总量，避免两个同名标签（比较对象是上游中文名，走 T.zh）
     const expLabel=(expWin.name===T.zh.winTotalPoints)?t('winRemPoints'):expWin.name;
     const bar1=frac!=null?`<div class="q2bar"><i style="width:${Math.max(2,Math.min(100,frac*100)).toFixed(1)}%;background:${expColor(days/864e5)}"></i></div>`:'';
@@ -927,7 +932,8 @@ function quotaCard(q){
       }
       if(bw){
         const rem2=winRemain(bw);
-        const frac2=(rem2!=null&&bw.limit)?rem2/bw.limit:(bw.remaining!=null?bw.remaining/100:(bw.used!=null&&bw.limit?bw.used/100:null));
+        // 同样画「剩余份额」：rem2/limit；百分比窗口（无 remaining）画 (100-used)/100
+        const frac2=(rem2!=null&&bw.limit)?rem2/bw.limit:(bw.remaining!=null?bw.remaining/100:(bw.used!=null&&bw.limit?(100-bw.used)/100:null));
         const e2=winExp(bw), d2=e2!=null?(e2-Date.now())/864e5:null;
         const right2=d2!=null?fmtDaysLeft(e2):(bw.unit?esc(bw.unit):'');
         rows.push(`<div class="q2row"><span class="q2label" title="${esc(bw.name)}">${esc(bw.name)}</span><span class="q2val">${rem2!=null?(t('remPre')+fmt(rem2)+(bw.limit?(t('ofTotal')+fmt(bw.limit)):'')+t('remSuf')):'—'}</span><span class="q2exp"${d2!=null?` style="color:${expColor(d2)}${d2<=7?';font-weight:600':''}"`:''}>${right2}</span></div>`
@@ -941,7 +947,7 @@ function quotaCard(q){
     else if(rem!=null&&totWin.limit)right='/ '+fmt(totWin.limit);
     else if(totWin.remaining!=null&&totWin.limit)right=t('totalPre')+fmt(totWin.limit)+t('totalSuf');
     else right='';
-    const frac=(totWin.runsOut!=null&&totWin.limit)?totWin.runsOut/totWin.limit:(totWin.remaining!=null?totWin.remaining/100:(totWin.used!=null&&totWin.limit?totWin.used/100:null));
+    const frac=(totWin.runsOut!=null&&totWin.limit)?totWin.runsOut/totWin.limit:(totWin.remaining!=null?totWin.remaining/100:(totWin.used!=null&&totWin.limit?(100-totWin.used)/100:null));
     rows.push(`<div class="q2row"><span class="q2label" title="${esc(totWin.name)}">${esc(totWin.name)}</span><span class="q2val">${val}</span><span class="q2exp">${right}</span></div>`
       +(frac!=null?`<div class="q2bar"><i style="width:${Math.max(2,Math.min(100,frac*100)).toFixed(1)}%"></i></div>`:''));
   }else if(!totWin&&!q.balance&&expWin&&expWin.limit){
