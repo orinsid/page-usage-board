@@ -695,11 +695,21 @@ function winUsed(w){
   if(w.used!=null&&w.limit!=null&&w.used<=100&&(w.remaining==null||w.remaining<=100))return w.limit*w.used/100;
   return null;
 }
+// used 字段是 0–100 百分比且语义可信（无 remaining 配对或 remaining 也 ≤100）→ 返回它；
+// 有 remaining 时 used 与 remaining 是一对（Loomy 98/2），份额交给 remaining 分支处理。
+function usedPct(w){
+  if(/usd|美元|\$/i.test(w.unit||''))return null; // 美元是账单口径
+  if(w.used==null||w.remaining!=null&&w.remaining>100)return null;
+  if(w.remaining!=null&&w.remaining<=100&&Math.abs(100-w.used-w.remaining)>1)return null; // 不互补→used 另有含义
+  if(w.used<0||w.used>100)return null;
+  return w.used;
+}
 function winRemain(w){
   if(w.runsOut!=null)return w.runsOut;
   if(w.limit&&w.amount!=null)return Math.max(0,w.limit-w.amount);
-  // used 百分比 + 无 remaining：剩余 = limit×(100-used)/100（MonkeyCode 每日 Token 额度）
-  if(w.limit&&w.used!=null&&w.remaining==null)return Math.max(0,w.limit*(100-w.used)/100);
+  // used 百分比 + 无 remaining：剩余 = limit×(100-used)/100（MonkeyCode 每日 Token 额度）。
+  // 美元窗口排除：trae-global「Dollar Usage」used=0/limit=1 不是剩余 1 美元。
+  if(!/usd|美元|\$/i.test(w.unit||'')&&w.limit&&w.used!=null&&w.remaining==null)return Math.max(0,w.limit*(100-w.used)/100);
   // 余额型窗口（magpie 0.1.3771 归一化形状：balance=剩余绝对量，无 limit）：
   // meoo/kuku 的「积分」「积分余额」。balance 就是剩余，不是总量。
   if(w.balance!=null)return Math.max(0,w.balance);
@@ -870,22 +880,25 @@ function quotaCard(q){
   const rows=[];
   if(expWin){
     const rem=winRemain(expWin);
+    const pct=usedPct(expWin); // used 是 0–100 百分比的窗口（书生 5 小时额度、MonkeyCode）
     const val=rem!=null?(t('remPre')+fmt(rem)+(expWin.limit?(t('ofTotal')+fmt(expWin.limit)):'')+t('remSuf'))
       :(/欠费/.test(expWin.display||'')?esc(expWin.display)
       :(expWin.text?(t('remPre')+fmt(dispNum(expWin)||0)+t('remSuf'))
       :(expWin.remaining!=null?(expWin.limit&&!/usd|美元|\$/i.test(expWin.unit||'')?(t('remPre')+fmt(expWin.limit*expWin.remaining/100)+t('ofTotal')+fmt(expWin.limit)+t('remSuf')):(t('remPre')+Math.round(expWin.remaining)+'%'+t('remSuf')))
       :(expWin.balance!=null?(t('remPre')+fmt(expWin.balance)+t('remSuf'))
-      :(expWin.display?esc(expWin.display):'—')))));
+      :(pct!=null?(t('remainPct')+(100-pct)+'%'+t('remSuf'))
+      :(expWin.display?esc(expWin.display):'—'))))));
     const left=(expT-Date.now())/864e5;
     // 进度条画「剩余份额」：runsOut/limit、remaining/100，百分比窗口（MonkeyCode 等）
     // 剩余 = limit×(100-used)/100 → frac = 剩余/limit = (100-used)/100。
     // 不能用 used/100：那是「已用份额」，画出来会"剩一点"的错觉（used=0 时条只剩 2% 宽）。
+    // used 百分比不需要 limit 就能画份额（书生端砚「5 小时额度」只有 used+resetsAt）。
     // 美元额度（$/¥）不画：那是账单不是额度池，100% 蓝条会误导。
     const usdWin=/usd|美元|\$/i.test(expWin.unit||'');
     const frac=usdWin?null
       :(expWin.runsOut!=null&&expWin.limit)?expWin.runsOut/expWin.limit
       :(expWin.remaining!=null?expWin.remaining/100
-      :(expWin.used!=null&&expWin.limit?(100-expWin.used)/100:null));
+      :(pct!=null?(100-pct)/100:null));
     // 窗口本身就叫「总积分」时，第一行讲剩余、第二行讲总量，避免两个同名标签（比较对象是上游中文名，走 T.zh）
     const expLabel=(expWin.name===T.zh.winTotalPoints)?t('winRemPoints'):expWin.name;
     const bar1=frac!=null?`<div class="q2bar"><i style="width:${Math.max(2,Math.min(100,frac*100)).toFixed(1)}%;background:${expColor(days/864e5)}"></i></div>`:'';
@@ -910,9 +923,9 @@ function quotaCard(q){
         // 余额型窗口（balance/display 余额，无 limit）配「已用」文本窗口 → 已用/(已用+余额) 分段条
         // （meoo：余额 6,106 + 「已用」894 → 12.8%）。无已用窗口时无分母，不画。
         // expWin 可能为 null（tot 有值但没有任何窗口能算到期——soonWin 返回 [null,Infinity]）：
-        // 此处没有"另一个窗口"可配对，跳过。
-        if(!expWin)rows.splice(rows.length-1,1);
-        else{
+        // 此时没有可配对的窗口，只保留上面那行总积分/积分余额（绝不能删它——删了 rows
+        // 会掉进 noWindows 兜底，MonkeyCode 这类 balance-only 卡就整卡变「无窗口数据」）。
+        if(expWin){
           const rem=winRemain(expWin);
           if(rem!=null){
             const usedWin=wins.find(w=>w!==expWin&&/^已用|used/i.test(w.name||'')&&dispNum(w)!=null);
@@ -933,7 +946,7 @@ function quotaCard(q){
       if(bw){
         const rem2=winRemain(bw);
         // 同样画「剩余份额」：rem2/limit；百分比窗口（无 remaining）画 (100-used)/100
-        const frac2=(rem2!=null&&bw.limit)?rem2/bw.limit:(bw.remaining!=null?bw.remaining/100:(bw.used!=null&&bw.limit?(100-bw.used)/100:null));
+        const frac2=(rem2!=null&&bw.limit)?rem2/bw.limit:(bw.remaining!=null?bw.remaining/100:(usedPct(bw)!=null?(100-usedPct(bw))/100:null));
         const e2=winExp(bw), d2=e2!=null?(e2-Date.now())/864e5:null;
         const right2=d2!=null?fmtDaysLeft(e2):(bw.unit?esc(bw.unit):'');
         rows.push(`<div class="q2row"><span class="q2label" title="${esc(bw.name)}">${esc(bw.name)}</span><span class="q2val">${rem2!=null?(t('remPre')+fmt(rem2)+(bw.limit?(t('ofTotal')+fmt(bw.limit)):'')+t('remSuf')):'—'}</span><span class="q2exp"${d2!=null?` style="color:${expColor(d2)}${d2<=7?';font-weight:600':''}"`:''}>${right2}</span></div>`
@@ -947,7 +960,7 @@ function quotaCard(q){
     else if(rem!=null&&totWin.limit)right='/ '+fmt(totWin.limit);
     else if(totWin.remaining!=null&&totWin.limit)right=t('totalPre')+fmt(totWin.limit)+t('totalSuf');
     else right='';
-    const frac=(totWin.runsOut!=null&&totWin.limit)?totWin.runsOut/totWin.limit:(totWin.remaining!=null?totWin.remaining/100:(totWin.used!=null&&totWin.limit?(100-totWin.used)/100:null));
+    const frac=(totWin.runsOut!=null&&totWin.limit)?totWin.runsOut/totWin.limit:(totWin.remaining!=null?totWin.remaining/100:(usedPct(totWin)!=null?(100-usedPct(totWin))/100:null));
     rows.push(`<div class="q2row"><span class="q2label" title="${esc(totWin.name)}">${esc(totWin.name)}</span><span class="q2val">${val}</span><span class="q2exp">${right}</span></div>`
       +(frac!=null?`<div class="q2bar"><i style="width:${Math.max(2,Math.min(100,frac*100)).toFixed(1)}%"></i></div>`:''));
   }else if(!totWin&&!q.balance&&expWin&&expWin.limit){
